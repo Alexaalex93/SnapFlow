@@ -1,4 +1,4 @@
-// Copyright 2022 Ahmet Alp Balkan
+﻿// Copyright 2022 Ahmet Alp Balkan
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,12 +31,23 @@ import (
 	"github.com/ahmetb/RectangleWin/w32ex"
 )
 
-var lastResized w32.HWND
+var (
+	lastResized    w32.HWND
+	appConfigStore *ConfigStore
+	appConfig      *AppConfig
+	licenseManager *LicenseManager
+	entitlements   *Entitlements
+	snapEngine     *SnapEngine
+	dragManager    *DragManager
+)
 
 func main() {
 	runtime.LockOSThread() // since we bind hotkeys etc that need to dispatch their message here
-	if !w32ex.SetProcessDPIAware() {
+	if !w32ex.SetProcessDPIAwareBestEffort() {
 		panic("failed to set DPI aware")
+	}
+	if err := initAppRuntime(); err != nil {
+		panic(err)
 	}
 
 	autorun, err := AutoRunEnabled()
@@ -44,19 +55,11 @@ func main() {
 		panic(err)
 	}
 	fmt.Printf("autorun enabled=%v\n", autorun)
+	fmt.Printf("pro unlocked=%v\n", entitlements.IsPro())
 	printMonitors()
 
-	edgeFuncs := [][]resizeFunc{
-		{leftHalf, leftTwoThirds, leftOneThirds},
-		{rightHalf, rightTwoThirds, rightOneThirds},
-		{topHalf, topTwoThirds, topOneThirds},
-		{bottomHalf, bottomTwoThirds, bottomOneThirds}}
+	edgeFuncs, cornerFuncs := keyboardResizeFunctions()
 	edgeFuncTurn := make([]int, len(edgeFuncs))
-	cornerFuncs := [][]resizeFunc{
-		{topLeftHalf, topLeftTwoThirds, topLeftOneThirds},
-		{topRightHalf, topRightTwoThirds, topRightOneThirds},
-		{bottomLeftHalf, bottomLeftTwoThirds, bottomLeftOneThirds},
-		{bottomRightHalf, bottomRightTwoThirds, bottomRightOneThirds}}
 	cornerFuncTurn := make([]int, len(cornerFuncs))
 
 	cycleFuncs := func(funcs [][]resizeFunc, turns *[]int, i int) {
@@ -65,7 +68,7 @@ func main() {
 			panic("foreground window is NULL")
 		}
 		if lastResized != hwnd {
-			*turns = make([]int, len(edgeFuncs)) // reset
+			*turns = make([]int, len(funcs)) // reset
 		}
 		if _, err := resize(hwnd, funcs[i][(*turns)[i]%len(funcs[i])]); err != nil {
 			fmt.Printf("warn: resize: %v\n", err)
@@ -126,7 +129,7 @@ func main() {
 		for _, hk := range failedHotKeys {
 			msg += "  - " + hk.Describe() + "\n"
 		}
-		msg += "\nTo use these hotkeys in RectangleWin, close the other process using the key combination(s)."
+		msg += "\nTo use these hotkeys in " + ProductName + ", close the other process using the key combination(s)."
 		showMessageBox(msg)
 	}
 
@@ -148,8 +151,62 @@ func main() {
 	}
 }
 
+func initAppRuntime() error {
+	var err error
+	appConfigStore, err = NewConfigStore()
+	if err != nil {
+		return err
+	}
+	appConfig, err = appConfigStore.Load()
+	if err != nil {
+		return err
+	}
+	if err := appConfigStore.Save(appConfig); err != nil {
+		return err
+	}
+	licenseManager = NewLicenseManager(appConfig)
+	entitlements = NewEntitlements(licenseManager.ProUnlocked())
+	snapEngine = NewSnapEngine(entitlements)
+	overlay, err := NewOverlayRenderer()
+	if err != nil {
+		return err
+	}
+	dragManager = NewDragManager(snapEngine, NewGestureInterpreter(entitlements), overlay)
+	if err := dragManager.Start(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func keyboardResizeFunctions() ([][]resizeFunc, [][]resizeFunc) {
+	edgeFuncs := [][]resizeFunc{
+		{leftHalf},
+		{rightHalf},
+		{topHalf},
+		{bottomHalf},
+	}
+	cornerFuncs := [][]resizeFunc{
+		{topLeftHalf},
+		{topRightHalf},
+		{bottomLeftHalf},
+		{bottomRightHalf},
+	}
+	if entitlements.Enabled(FeatureThirdsAndTwoThirds) {
+		edgeFuncs[0] = append(edgeFuncs[0], leftTwoThirds, leftOneThirds)
+		edgeFuncs[1] = append(edgeFuncs[1], rightTwoThirds, rightOneThirds)
+		edgeFuncs[2] = append(edgeFuncs[2], topTwoThirds, topOneThirds)
+		edgeFuncs[3] = append(edgeFuncs[3], bottomTwoThirds, bottomOneThirds)
+
+		cornerFuncs[0] = append(cornerFuncs[0], topLeftTwoThirds, topLeftOneThirds)
+		cornerFuncs[1] = append(cornerFuncs[1], topRightTwoThirds, topRightOneThirds)
+		cornerFuncs[2] = append(cornerFuncs[2], bottomLeftTwoThirds, bottomLeftOneThirds)
+		cornerFuncs[3] = append(cornerFuncs[3], bottomRightTwoThirds, bottomRightOneThirds)
+	}
+	return edgeFuncs, cornerFuncs
+}
+
 func showMessageBox(text string) {
-	w32.MessageBox(w32.GetActiveWindow(), text, "RectangleWin", w32.MB_ICONWARNING|w32.MB_OK)
+	w32.MessageBox(w32.GetActiveWindow(), text, ProductName, w32.MB_ICONWARNING|w32.MB_OK)
 }
 
 type resizeFunc func(disp, cur w32.RECT) w32.RECT

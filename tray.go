@@ -1,4 +1,4 @@
-// Copyright 2022 Ahmet Alp Balkan
+﻿// Copyright 2022 Ahmet Alp Balkan
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,27 +25,59 @@ import (
 //go:embed assets/tray_icon.ico
 var icon []byte
 
-const repo = "https://github.com/ahmetb/RectangleWin"
-
 func initTray() {
 	systray.Register(onReady, onExit)
 }
 
 func onReady() {
 	systray.SetIcon(icon)
-	systray.SetTitle("RectangleWin")
-	systray.SetTooltip("RectangleWin")
+	systray.SetTitle(ProductName)
+	systray.SetTooltip(ProductName)
 
 	autorun, err := AutoRunEnabled()
 	if err != nil {
 		panic(err)
 	}
 
+	licenseLabel := "License: Free"
+	if entitlements != nil && entitlements.IsPro() {
+		licenseLabel = "License: Pro"
+	}
+	mLicense := systray.AddMenuItem(licenseLabel, "")
+	mLicense.Disable()
+
 	mRepo := systray.AddMenuItem("Documentation", "")
 	go func() {
 		for range mRepo.ClickedCh {
-			if err := w32.ShellExecute(0, "open", repo, "", "", w32.SW_SHOWNORMAL); err != nil {
+			if err := w32.ShellExecute(0, "open", ProductDocsURL, "", "", w32.SW_SHOWNORMAL); err != nil {
 				fmt.Printf("failed to launch browser: (%d), %v\n", w32.GetLastError(), err)
+			}
+		}
+	}()
+
+	mUpgrade := systray.AddMenuItem("Upgrade to Pro", "")
+	go func() {
+		for range mUpgrade.ClickedCh {
+			if err := w32.ShellExecute(0, "open", ProductUpgradeURL, "", "", w32.SW_SHOWNORMAL); err != nil {
+				fmt.Printf("failed to launch upgrade url: (%d), %v\n", w32.GetLastError(), err)
+			}
+			if appConfig != nil {
+				appConfig.UpgradeEntrySeen = true
+				if appConfigStore != nil {
+					_ = appConfigStore.Save(appConfig)
+				}
+			}
+		}
+	}()
+
+	mOpenConfig := systray.AddMenuItem("Open Config", "")
+	go func() {
+		for range mOpenConfig.ClickedCh {
+			if appConfigStore == nil {
+				continue
+			}
+			if err := w32.ShellExecute(0, "open", appConfigStore.path, "", "", w32.SW_SHOWNORMAL); err != nil {
+				fmt.Printf("failed to launch config file: (%d), %v\n", w32.GetLastError(), err)
 			}
 		}
 	}()
@@ -89,5 +121,11 @@ func onReady() {
 }
 
 func onExit() {
+	if dragManager != nil {
+		dragManager.Stop()
+		if dragManager.overlay != nil {
+			dragManager.overlay.Close()
+		}
+	}
 	fmt.Println("onExit invoked")
 }

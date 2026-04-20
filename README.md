@@ -1,77 +1,106 @@
-# RectangleWin
+﻿# SnapFlow
 
-A minimalistic Windows rewrite of macOS
-[Rectangle.app](https://rectangleapp.com)/[Spectacle.app](https://www.spectacleapp.com/).
-([Why?](#why))
+SnapFlow is a commercial derivative of [RectangleWin](https://github.com/ahmetb/RectangleWin), focused on fluid mouse-driven window snapping on Windows.
 
-A hotkey-oriented window snapping and resizing tool for Windows.
+It is designed to feel closer to Rectangle on macOS than static zone tools by prioritizing:
+- drag-to-edge gestures
+- live translucent preview
+- dynamic target morphing while you keep dragging
 
-This animation illustrates how RectangleWin helps me move windows to edges
-and corners (and cycle through half, one-thirds or two thirds width or height)
-only using hotkeys:
+SnapFlow is distributed under a freemium model (Free + one-time Pro), while preserving Apache 2.0 attribution and compliance for the upstream base.
 
-![RectangleWin demo](./assets/RectangleWin-demo.gif)
+## What SnapFlow Is
 
-## Install
+- A modern Windows snap utility with dynamic edge gestures
+- A tray app with keyboard + drag snapping workflows
+- A pragmatic, lightweight utility that runs without admin privileges
 
-1. Go to [Releases](https://github.com/ahmetb/RectangleWin/releases) and
-   download the suitable binary for your architecture (typically x64).
+## What SnapFlow Is Not
 
-2. Launch the `.exe` file. Now the program icon should be visible on system
-   tray!
+- Not a full tiling window manager
+- Not a static grid editor
+- Not a FancyZones clone
 
-3. Click on the icon and mark as "Run on startup" to make sure you don't have
-   to run it every time you reboot your PC.
+## Features
+
+### Free Tier
+
+- Left/right half snapping
+- Top/bottom half snapping
+- Basic corner snapping (quadrants)
+- Basic drag-to-edge preview and snap
+- Core keyboard shortcuts for basic layouts
+
+### Pro Tier (one-time upgrade)
+
+- Thirds and two-thirds layouts
+- Dynamic edge morphing (for example one-third <-> two-thirds while dragging on an edge)
+- Advanced gesture behavior for richer edge interactions
+- Extensible entitlement architecture for future premium features
 
 ## Keyboard Bindings
 
-- **Snap to edges** (left/right/top/bottom ½, ⅔, ⅓):
-  - <kbd>Win</kbd> + <kbd>Alt</kbd> + <kbd>&larr;</kbd><kbd>&rarr;</kbd><kbd>&uarr;</kbd><kbd>&darr;</kbd>
-  - Press multiple times to alternate between ½, ⅔ and ⅓.
+- **Snap to edges**: <kbd>Win</kbd> + <kbd>Alt</kbd> + <kbd>&larr;</kbd><kbd>&rarr;</kbd><kbd>&uarr;</kbd><kbd>&darr;</kbd>
+- **Corner snapping**: <kbd>Win</kbd> + <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd>
+- **Center window**: <kbd>Win</kbd> + <kbd>Alt</kbd> + <kbd>C</kbd>
+- **Maximize**: <kbd>Win</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd>
+- **Always On Top toggle**: <kbd>Win</kbd> + <kbd>Alt</kbd> + <kbd>A</kbd>
 
-- **Corner snapping**
-  - <kbd>Win</kbd> + <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>&larr;</kbd>: top-left ½, ⅔ and ⅓
-  - <kbd>Win</kbd> + <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>&uarr;</kbd>: top-right ½, ⅔ and ⅓
-  - <kbd>Win</kbd> + <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>&darr;</kbd>: bottom-left ½, ⅔ and ⅓
-  - <kbd>Win</kbd> + <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>&rarr;</kbd>: bottom-right ½, ⅔ and ⅓
+Note: In Free tier, advanced thirds/two-thirds keyboard cycling is entitlement-gated.
 
-- **Center window** on the display: <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>
+## Drag UX
 
-- **Maximize window**: <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>
-  (Obsolete since Windows natively supports <kbd>Win</kbd>+<kbd>&uarr;</kbd>)
+- Start dragging a top-level window
+- Move to an edge or corner to trigger a snap preview
+- Keep dragging near the same edge to morph target layouts
+- Release mouse to commit
+- Leave snap regions to cancel preview
 
-- **Always On Top (toggle)**: <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd>
+## Configuration and Licensing
 
-## Why?
+SnapFlow stores versioned configuration at:
+- `%AppData%\\SnapFlow\\config.json`
 
-It seems that no window snapping utility for Windows is capable of letting
-user snap windows to edges or corners in {half, two-thirds, one-third} sizes
-using configurable **shortcut keys**, and center windows in a screen like
-Rectangle.app does, so I wrote this small utility for myself.
+Current schema includes:
+- `version`
+- `pro_license_key`
+- `upgrade_entry_seen`
 
-I've tried the native Windows shortcuts and PowerToys FancyZones and they
-are not supporting corners, alternating between half and one/two thirds, and
-are not offering enough hotkey support.
+License validation is local-only in this version (no activation server required yet). The architecture is intentionally ready for future activation hardening.
 
-## Roadmap
+## Known Limitations / Rectangle Parity Notes
 
-- Configurable shortcuts: I don't need these and it will likely require a pop-up
-  UI, so I will probably not get to this.
+Exact parity with Rectangle on macOS is not always possible on Windows due to platform-level differences:
+- Windows move/size notifications are not identical to macOS drag event semantics.
+- Some app frameworks (custom-drawn/borderless windows) may emit move/size events differently.
+- Invisible frame and DPI behavior vary by framework and OS version.
+- Drag behavior for maximized/restore transitions depends on native Windows window-manager handling.
 
-## Development (Install from source)
+SnapFlow targets the closest reliable Rectangle-like interaction Windows APIs allow without introducing brittle hooks or a heavyweight compositor model.
 
-With Go 1.17+ installed, clone this repository and run:
+## Packaging and Microsoft Store Readiness
+
+Current code is aligned for future MSIX packaging:
+- user-level app behavior (no admin required)
+- no privileged APIs required for core snapping
+- lightweight dependency footprint
+
+Potential Store submission follow-ups:
+- final app identity assets and publisher metadata
+- packaging/signing pipeline and validation checks
+- final privacy/support URLs for listing completeness
+
+## Attribution and License Compliance
+
+SnapFlow is based on RectangleWin by Ahmet Alp Balkan.
+
+This codebase retains and honors Apache License 2.0 requirements. See [LICENSE](./LICENSE).
+
+## Development
+
+With Go installed, build on Windows:
 
 ```sh
 go generate
 GOOS=windows go build -ldflags -H=windowsgui .
 ```
-
-The `RectangleWin.exe` will be available in the same directory.
-
-## License
-
-This project is distributed as-is under the Apache 2.0 license.
-See [LICENSE](./LICENSE).
-
-If you see bugs, please open issues. I can't promise any fixes.

@@ -1,4 +1,4 @@
-// Copyright 2022 Ahmet Alp Balkan
+﻿// Copyright 2022 Ahmet Alp Balkan
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	AutoRunName = `RectangleWin`
-	regKey      = `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
+	AutoRunName    = ProductName
+	legacyAutoRun  = "RectangleWin"
+	regKey         = `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
 )
 
 func self() string {
@@ -37,11 +38,19 @@ func AutoRunEnabled() (bool, error) {
 	}
 	defer rk.Close()
 
-	v, _, err := rk.GetStringValue(AutoRunName)
-	if errors.Is(err, registry.ErrNotExist) || errors.Is(err, registry.ErrUnexpectedType) {
-		return false, nil
+	for _, name := range []string{AutoRunName, legacyAutoRun} {
+		v, _, err := rk.GetStringValue(name)
+		if errors.Is(err, registry.ErrNotExist) || errors.Is(err, registry.ErrUnexpectedType) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if v == self() {
+			return true, nil
+		}
 	}
-	return v == self(), err
+	return false, nil
 }
 
 func AutoRunDisable() error {
@@ -51,11 +60,16 @@ func AutoRunDisable() error {
 	}
 	defer rk.Close()
 
-	err = rk.DeleteValue(AutoRunName)
-	if errors.Is(err, registry.ErrNotExist) {
-		return nil
+	for _, name := range []string{AutoRunName, legacyAutoRun} {
+		err = rk.DeleteValue(name)
+		if errors.Is(err, registry.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
 	}
-	return err
+	return nil
 }
 
 func AutoRunEnable() error {
@@ -64,5 +78,8 @@ func AutoRunEnable() error {
 		return err
 	}
 	defer rk.Close()
+	if err := rk.DeleteValue(legacyAutoRun); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
 	return rk.SetStringValue(AutoRunName, self())
 }

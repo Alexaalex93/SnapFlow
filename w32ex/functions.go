@@ -1,4 +1,4 @@
-// Copyright 2022 Ahmet Alp Balkan
+﻿// Copyright 2022 Ahmet Alp Balkan
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -65,4 +65,15 @@ func GetShellWindow() (hwnd w32.HWND) {
 func SetProcessDPIAware() bool {
 	r1, _, _ := user32.NewProc("SetProcessDPIAware").Call()
 	return r1 != 0
+}
+
+func SetProcessDPIAwareBestEffort() bool {
+	const dpiAwarenessContextPerMonitorAwareV2 = ^uintptr(3) // (DPI_AWARENESS_CONTEXT)-4
+	if p := user32.NewProc("SetProcessDpiAwarenessContext"); p != nil {
+		r1, _, _ := p.Call(dpiAwarenessContextPerMonitorAwareV2)
+		if r1 != 0 {
+			return true
+		}
+	}
+	return SetProcessDPIAware()
 }
