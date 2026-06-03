@@ -30,16 +30,22 @@ jobs:
           cache: true
 
       # ── Version ───────────────────────────────────────────────────────────
-      - name: Read version
+      # VERSION file holds MAJOR.MINOR (e.g. "1.0").
+      # Patch = total commit count on this branch — auto-increments every push.
+      # To release 1.1: change VERSION to "1.1" and push.
+      - name: Compute version
         id: ver
         shell: pwsh
         run: |
           if ('${{ github.ref_type }}' -eq 'tag') {
-            # Tag push: use the tag (e.g. v1.2.3 → 1.2.3)
             $v = '${{ github.ref_name }}' -replace '^v', ''
           } else {
-            # Branch push: read VERSION file
-            $v = (Get-Content VERSION -Raw).Trim()
+            $raw   = (Get-Content VERSION -Raw).Trim()
+            # Keep only MAJOR.MINOR — split on "." and take first two parts.
+            $parts = $raw -split '\.'
+            $base  = "$($parts[0]).$($parts[1] ?? '0')"
+            $patch = git rev-list --count HEAD
+            $v = "$base.$patch"
           }
           "VERSION=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "TAG=v$v"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
