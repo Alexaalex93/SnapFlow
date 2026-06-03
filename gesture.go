@@ -125,6 +125,7 @@ func (g *GestureInterpreter) Update(cursor w32.POINT, work w32.RECT) WindowActio
 }
 
 // cursorInBottomZone returns true if the cursor is in the bottom snap edge area.
+// Uses the same effectiveEdgeW logic as SnapZonesForWork so detection matches zones.
 func cursorInBottomZone(cursor w32.POINT, work w32.RECT, cfg *AppConfig) bool {
 	edgeW := int32(cfg.EdgeThresholdPx)
 	if edgeW <= 0 {
@@ -133,6 +134,9 @@ func cursorInBottomZone(cursor w32.POINT, work w32.RECT, cfg *AppConfig) bool {
 	corner := int32(cfg.CornerSnapAreaSize)
 	if corner <= 0 {
 		corner = 20
+	}
+	if corner > edgeW {
+		edgeW = corner // match effectiveEdgeW from SnapZonesForWork
 	}
 	return cursor.Y >= work.Bottom-edgeW &&
 		cursor.X > work.Left+corner &&

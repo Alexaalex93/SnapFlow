@@ -102,8 +102,17 @@ func SnapZonesForWork(work w32.RECT, cfg *AppConfig) []SnapZone {
 		shortEdge = H/2 - corner
 	}
 
+	// Edge zones must be at least as thick as corner zones to ensure seamless
+	// coverage. If edgeW < corner, a gap would appear between the corner square
+	// and the adjacent edge strip (e.g. left=12px edge vs corner=20px square
+	// leaves an uncovered band at x=12..20 between corner and edge).
+	effectiveEdgeW := edgeW
+	if corner > effectiveEdgeW {
+		effectiveEdgeW = corner
+	}
+
 	// ── Corner snap areas ─────────────────────────────────────────────────
-	// These are square areas at each corner of the screen.
+	// Square hot-zones at each corner of the screen.
 	topLeftCorner := w32.RECT{
 		Left: work.Left, Top: work.Top,
 		Right: work.Left + corner, Bottom: work.Top + corner,
@@ -122,10 +131,9 @@ func SnapZonesForWork(work w32.RECT, cfg *AppConfig) []SnapZone {
 	}
 
 	// ── Top edge ──────────────────────────────────────────────────────────
-	// In Rectangle: top edge → Maximize (center portion, excluding corners)
 	topEdge := w32.RECT{
 		Left: work.Left + corner, Top: work.Top,
-		Right: work.Right - corner, Bottom: work.Top + edgeW,
+		Right: work.Right - corner, Bottom: work.Top + effectiveEdgeW,
 	}
 
 	// ── Left edge: compound halves ────────────────────────────────────────
@@ -134,34 +142,34 @@ func SnapZonesForWork(work w32.RECT, cfg *AppConfig) []SnapZone {
 	// Lower zone → Bottom Left quadrant
 	leftEdgeTop := w32.RECT{
 		Left: work.Left, Top: work.Top + corner,
-		Right: work.Left + edgeW, Bottom: work.Top + corner + shortEdge,
+		Right: work.Left + effectiveEdgeW, Bottom: work.Top + corner + shortEdge,
 	}
 	leftEdgeMid := w32.RECT{
 		Left: work.Left, Top: work.Top + corner + shortEdge,
-		Right: work.Left + edgeW, Bottom: work.Bottom - corner - shortEdge,
+		Right: work.Left + effectiveEdgeW, Bottom: work.Bottom - corner - shortEdge,
 	}
 	leftEdgeBot := w32.RECT{
 		Left: work.Left, Top: work.Bottom - corner - shortEdge,
-		Right: work.Left + edgeW, Bottom: work.Bottom - corner,
+		Right: work.Left + effectiveEdgeW, Bottom: work.Bottom - corner,
 	}
 
 	// ── Right edge: compound halves ───────────────────────────────────────
 	rightEdgeTop := w32.RECT{
-		Left: work.Right - edgeW, Top: work.Top + corner,
+		Left: work.Right - effectiveEdgeW, Top: work.Top + corner,
 		Right: work.Right, Bottom: work.Top + corner + shortEdge,
 	}
 	rightEdgeMid := w32.RECT{
-		Left: work.Right - edgeW, Top: work.Top + corner + shortEdge,
+		Left: work.Right - effectiveEdgeW, Top: work.Top + corner + shortEdge,
 		Right: work.Right, Bottom: work.Bottom - corner - shortEdge,
 	}
 	rightEdgeBot := w32.RECT{
-		Left: work.Right - edgeW, Top: work.Bottom - corner - shortEdge,
+		Left: work.Right - effectiveEdgeW, Top: work.Bottom - corner - shortEdge,
 		Right: work.Right, Bottom: work.Bottom - corner,
 	}
 
 	// ── Bottom edge ───────────────────────────────────────────────────────
 	bottomEdge := w32.RECT{
-		Left: work.Left + corner, Top: work.Bottom - edgeW,
+		Left: work.Left + corner, Top: work.Bottom - effectiveEdgeW,
 		Right: work.Right - corner, Bottom: work.Bottom,
 	}
 
