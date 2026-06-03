@@ -74,12 +74,12 @@ type wndClassExW struct {
 
 // PAINTSTRUCT mirrors Win32 PAINTSTRUCT.
 type paintStruct struct {
-	hdc         uintptr
-	fErase      int32
-	rcPaint     w32.RECT
-	fRestore    int32
-	fIncUpdate  int32
-	_           [32]byte
+	hdc        uintptr
+	fErase     int32
+	rcPaint    w32.RECT
+	fRestore   int32
+	fIncUpdate int32
+	_          [32]byte
 }
 
 // overlayWndProc is the custom window procedure for the snap preview overlay.
@@ -217,10 +217,10 @@ func (o *OverlayRenderer) animLoop() {
 	)
 
 	var (
-		visible     bool
-		curAlpha    byte
-		targetAlpha byte
-		lastBounds  w32.RECT
+		visible      bool
+		curAlpha     byte
+		targetAlpha  byte
+		lastBounds   w32.RECT
 		lastW, lastH int32
 	)
 
@@ -328,7 +328,7 @@ func (o *OverlayRenderer) animLoop() {
 }
 
 var procInvalidateRect = overlayUser32.NewProc("InvalidateRect")
-var procUpdateWindow    = overlayUser32.NewProc("UpdateWindow")
+var procUpdateWindow = overlayUser32.NewProc("UpdateWindow")
 
 func (o *OverlayRenderer) moveTo(bounds w32.RECT) {
 	procSetWindowPos.Call(

@@ -133,9 +133,9 @@ func bottomThirdsAction(work w32.RECT, xMin, xMax int32) WindowAction {
 	t1 := work.Left + W/3   // end of first third
 	t2 := work.Left + W*2/3 // end of second third
 
-	coversFirst  := xMin < t1
+	coversFirst := xMin < t1
 	coversCenter := xMax > work.Left+W/3 && xMin < t2
-	coversLast   := xMax >= t2
+	coversLast := xMax >= t2
 
 	switch {
 	case coversFirst && coversCenter && coversLast:

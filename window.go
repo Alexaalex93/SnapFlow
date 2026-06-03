@@ -224,7 +224,7 @@ func isStandardWindow(hwnd w32.HWND) bool {
 		return false
 	}
 
-	style   := w32.GetWindowLong(hwnd, gwlStyle)
+	style := w32.GetWindowLong(hwnd, gwlStyle)
 	exStyle := w32.GetWindowLong(hwnd, gwlExStyle)
 
 	// Always skip child windows and disabled windows.
@@ -244,7 +244,7 @@ func isStandardWindow(hwnd w32.HWND) bool {
 	// these are typically menus, tooltips, or transient overlays.
 	// (WS_THICKFRAME alone doesn't make something a real resizable window.)
 	hasCaption := style&w32.WS_CAPTION == w32.WS_CAPTION
-	isPopup    := uint32(style)&w32.WS_POPUP == w32.WS_POPUP
+	isPopup := uint32(style)&w32.WS_POPUP == w32.WS_POPUP
 	if isPopup && !hasCaption {
 		return false
 	}

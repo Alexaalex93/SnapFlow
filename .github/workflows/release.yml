@@ -1,7 +1,5 @@
 name: Release
 
-# Every push to main → updates the rolling "latest" pre-release.
-# Every version tag (v*)  → creates a proper versioned release.
 on:
   push:
     branches: [main]
@@ -21,7 +19,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # ── Version string ────────────────────────────────────────────────────
+      # ── Version ───────────────────────────────────────────────────────────
       - name: Set version
         id: ver
         shell: pwsh
@@ -35,13 +33,14 @@ jobs:
           "VERSION=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Version: $v"
 
-      # ── Icon ─────────────────────────────────────────────────────────────
-      - name: Generate icon
-        shell: pwsh
+      # ── Icon (assets/icon.ico is committed — regenerate with WinPS 5.1) ───
+      - name: Regenerate icon
+        shell: powershell
         run: .\scripts\make-icon.ps1
 
-      # ── Embed version + icon into exe ─────────────────────────────────────
+      # ── Embed version + icon ──────────────────────────────────────────────
       - name: Install goversioninfo
+        shell: pwsh
         run: go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
 
       - name: Patch versioninfo.json
@@ -49,18 +48,19 @@ jobs:
         run: |
           $ver = '${{ steps.ver.outputs.VERSION }}'
           $vi  = Get-Content versioninfo.json -Raw | ConvertFrom-Json
-          $p   = ($ver -split '[.\-+]')
-          $vi.FixedFileInfo.FileVersion.Major    = [int]($p[0] -replace '[^0-9]')
-          $vi.FixedFileInfo.FileVersion.Minor    = [int]($p[1] -replace '[^0-9]')
-          $vi.FixedFileInfo.FileVersion.Patch    = [int]($p[2] -replace '[^0-9]')
-          $vi.FixedFileInfo.ProductVersion.Major = [int]($p[0] -replace '[^0-9]')
-          $vi.FixedFileInfo.ProductVersion.Minor = [int]($p[1] -replace '[^0-9]')
-          $vi.FixedFileInfo.ProductVersion.Patch = [int]($p[2] -replace '[^0-9]')
+          $num = ($ver -replace '[^0-9.]', '') -split '\.'
+          $vi.FixedFileInfo.FileVersion.Major    = [int]($num[0] -replace '[^0-9]','0')
+          $vi.FixedFileInfo.FileVersion.Minor    = [int]($num[1] -replace '[^0-9]','0')
+          $vi.FixedFileInfo.FileVersion.Patch    = [int]($num[2] -replace '[^0-9]','0')
+          $vi.FixedFileInfo.ProductVersion.Major = [int]($num[0] -replace '[^0-9]','0')
+          $vi.FixedFileInfo.ProductVersion.Minor = [int]($num[1] -replace '[^0-9]','0')
+          $vi.FixedFileInfo.ProductVersion.Patch = [int]($num[2] -replace '[^0-9]','0')
           $vi.StringFileInfo.FileVersion    = $ver
           $vi.StringFileInfo.ProductVersion = $ver
           $vi | ConvertTo-Json -Depth 10 | Set-Content versioninfo.json -Encoding utf8
 
-      - name: go generate  (resource.syso)
+      - name: go generate (resource.syso)
+        shell: pwsh
         run: go generate
 
       # ── Build exe ─────────────────────────────────────────────────────────
@@ -70,36 +70,27 @@ jobs:
           $ver = '${{ steps.ver.outputs.VERSION }}'
           New-Item -ItemType Directory -Force dist | Out-Null
           go build -ldflags "-H=windowsgui -s -w -X main.appVersion=$ver" -o dist\snapflow.exe .
-          $kb = [int]((Get-Item dist\snapflow.exe).Length / 1KB)
-          Write-Host "snapflow.exe — ${kb} KB"
+          Write-Host "snapflow.exe — $([int]((Get-Item dist\snapflow.exe).Length/1KB)) KB"
 
-      # ── Installer with Inno Setup (via Chocolatey) ────────────────────────
+      # ── Installer ─────────────────────────────────────────────────────────
       - name: Install Inno Setup
         shell: pwsh
-        run: choco install innosetup --yes --no-progress --ignore-checksums
+        run: choco install innosetup --yes --no-progress
 
       - name: Build installer
         shell: pwsh
         run: |
           $ver  = '${{ steps.ver.outputs.VERSION }}'
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { throw "ISCC not found at $iscc" }
-
-          # Run from repo root — installer.iss uses relative paths from scripts/
+          if (-not (Test-Path $iscc)) { throw "ISCC not found" }
           & $iscc "scripts\installer.iss" "/DAppVersion=$ver"
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed (exit $LASTEXITCODE)" }
-
-          # Rename to include version
-          $out = "dist\SnapFlow-Setup.exe"
-          if (Test-Path $out) {
-            Rename-Item $out "SnapFlow-$ver-Setup.exe"
-          }
-
-          Write-Host "dist/ contents:"
-          Get-ChildItem dist\ | Format-Table Name, Length
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+          $src = Get-ChildItem dist\SnapFlow-Setup.exe -ErrorAction SilentlyContinue
+          if ($src) { Rename-Item $src.FullName "SnapFlow-$ver-Setup.exe" }
+          Get-ChildItem dist\ | Format-Table Name, @{N='Size(KB)';E={[int]($_.Length/1KB)}}
 
       # ── Publish ───────────────────────────────────────────────────────────
-      - name: Publish versioned release  (tag push)
+      - name: Publish versioned release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
@@ -109,7 +100,6 @@ jobs:
 
             Download and run **SnapFlow-${{ steps.ver.outputs.VERSION }}-Setup.exe**.
 
-            The installer:
             - Installs to `%LOCALAPPDATA%\SnapFlow` (no admin required)
             - Optional desktop shortcut
             - Optional autostart at login
@@ -121,25 +111,23 @@ jobs:
             dist/SnapFlow-*-Setup.exe
             dist/snapflow.exe
           prerelease: ${{ contains(steps.ver.outputs.VERSION, '-') }}
-          fail_on_unmatched_files: true
 
-      - name: Publish rolling "latest" release  (main branch push)
+      - name: Publish latest pre-release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: "Latest build (main)"
           body: |
-            Automatically built from the latest commit on `main` — ${{ github.sha }}.
+            Auto-built from commit ${{ github.sha }} on `main`.
 
             > **Development build** — for stable releases see the [Releases page](../../releases).
 
             | File | Description |
             |---|---|
             | `SnapFlow-*-Setup.exe` | Installer — recommended |
-            | `snapflow.exe` | Portable — just run, no install needed |
+            | `snapflow.exe` | Portable — no install needed |
           files: |
             dist/SnapFlow-*-Setup.exe
             dist/snapflow.exe
           prerelease: true
-          fail_on_unmatched_files: true

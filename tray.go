@@ -16,11 +16,11 @@ var trayIconData []byte
 const wmTrayNotify = w32.WM_APP + 100
 
 const (
-	menuSettings      = 1001
-	menuAutoRun       = 1002
-	menuOpenConfig    = 1003
-	menuQuit          = 1004
-	menuDisableWSnap  = 1005
+	menuSettings     = 1001
+	menuAutoRun      = 1002
+	menuOpenConfig   = 1003
+	menuQuit         = 1004
+	menuDisableWSnap = 1005
 )
 
 var (
@@ -204,7 +204,7 @@ func loadTrayIcon() uintptr {
 			icon, _, _ := trayUser32.NewProc("LoadImageW").Call(
 				0,
 				uintptr(unsafe.Pointer(ptr)),
-				1,    // IMAGE_ICON
+				1, // IMAGE_ICON
 				0, 0,
 				0x00000010, // LR_LOADFROMFILE
 			)

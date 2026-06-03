@@ -17,12 +17,12 @@ func TestFillDefaults_SetsAll(t *testing.T) {
 
 func TestFillDefaults_PreservesValidValues(t *testing.T) {
 	cfg := &AppConfig{
-		EdgeThresholdPx:    30,
-		CornerSnapAreaSize: 15,
+		EdgeThresholdPx:      30,
+		CornerSnapAreaSize:   15,
 		AlmostMaximizeWidth:  0.8,
 		AlmostMaximizeHeight: 0.85,
 		SizeOffset:           20,
-		ShortcutSet:         "rectangle",
+		ShortcutSet:          "rectangle",
 	}
 	out := fillDefaults(cfg)
 	if out.EdgeThresholdPx != 30 {

@@ -10,34 +10,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
       - name: gofmt
-        run: test -z "$(gofmt -s -d .)"
+        run: |
+          files=$(gofmt -s -l .)
+          if [ -n "$files" ]; then
+            echo "gofmt found unformatted files:"
+            echo "$files"
+            exit 1
+          fi
 
       - name: go mod tidy
-        run: go mod tidy && git diff --no-patch --exit-code
+        run: go mod tidy && git diff --no-patch --exit-code go.mod go.sum
 
       - name: go vet
         run: go vet ./...
 
-  test:
+  build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Generate icon
-        run: .\scripts\make-icon.ps1
-        shell: pwsh
 
       - name: Install goversioninfo
         run: go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
@@ -49,8 +49,8 @@ jobs:
         run: go test ./...
 
       - name: go build
-        run: go build -ldflags "-H=windowsgui -s -w" -o snapflow.exe .
         shell: pwsh
+        run: go build -ldflags "-H=windowsgui -s -w" -o snapflow.exe .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

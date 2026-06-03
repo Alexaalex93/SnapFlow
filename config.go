@@ -42,8 +42,8 @@ type AppConfig struct {
 
 	// ── Snap behavior toggles ────────────────────────────────────────────────
 	SnapByDragging   bool `json:"snapByDragging"`   // default true
-	RestoreSize      bool `json:"restoreSize"`       // restore on unsnap
-	AnimateFootprint bool `json:"animateFootprint"`  // default true
+	RestoreSize      bool `json:"restoreSize"`      // restore on unsnap
+	AnimateFootprint bool `json:"animateFootprint"` // default true
 
 	// ── Per-zone snap action ─────────────────────────────────────────────────
 	// Each field is a WindowAction name (e.g. "leftHalf", "maximize", "none").

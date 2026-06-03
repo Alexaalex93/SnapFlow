@@ -98,7 +98,8 @@ func startup() error {
 // registerAllHotKeys registers Rectangle's default shortcuts translated to Windows.
 //
 // Mapping:  macOS Ctrl+Option → Windows Ctrl+Alt
-//           macOS Ctrl+Option+Cmd → Windows Ctrl+Alt+Win
+//
+//	macOS Ctrl+Option+Cmd → Windows Ctrl+Alt+Win
 //
 // NOTE: Ctrl+Alt+Arrow is often grabbed by Intel/AMD/NVIDIA display-rotation
 // shortcuts. If registration fails the user is told which shortcuts conflicted
@@ -106,61 +107,72 @@ func startup() error {
 // GPU control panel ("Disable hotkeys" or "Rotate display" shortcut).
 func registerAllHotKeys() {
 	// Primary modifier set: Ctrl+Alt (= macOS Ctrl+Option)
-	ca  := MOD_CONTROL | MOD_ALT | MOD_NOREPEAT
+	ca := MOD_CONTROL | MOD_ALT | MOD_NOREPEAT
 	cas := MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT
 	caw := MOD_CONTROL | MOD_ALT | MOD_WIN | MOD_NOREPEAT
 
 	const (
-		vkLeft   = 0x25; vkRight = 0x27
-		vkUp     = 0x26; vkDown  = 0x28
+		vkLeft   = 0x25
+		vkRight  = 0x27
+		vkUp     = 0x26
+		vkDown   = 0x28
 		vkReturn = 0x0D
 		// macOS "Delete" key = Backspace on Windows (0x08).
 		// Ctrl+Alt+Delete is system-reserved by Windows and can never be registered.
 		vkBack  = 0x08
-		vkEqual = 0xBB; vkMinus = 0xBD // = and -
+		vkEqual = 0xBB
+		vkMinus = 0xBD // = and -
 
-		vkC = 0x43; vkD = 0x44; vkE = 0x45; vkF = 0x46
-		vkG = 0x47; vkI = 0x49; vkJ = 0x4A; vkK = 0x4B
-		vkR = 0x52; vkT = 0x54; vkU = 0x55
+		vkC = 0x43
+		vkD = 0x44
+		vkE = 0x45
+		vkF = 0x46
+		vkG = 0x47
+		vkI = 0x49
+		vkJ = 0x4A
+		vkK = 0x4B
+		vkR = 0x52
+		vkT = 0x54
+		vkU = 0x55
 	)
 
 	hks := []HotKey{
 		// ── Halves ───────────────────────────────────────────────────────────
 		// Ctrl+Alt+Arrow is commonly taken by GPU rotation shortcuts.
 		// If they fail the user sees which ones and can fix in GPU settings.
-		{id: 1, mod: ca, vk: vkLeft,  label: "Left Half",   action: ActionLeftHalf},
-		{id: 2, mod: ca, vk: vkRight, label: "Right Half",  action: ActionRightHalf},
-		{id: 3, mod: ca, vk: vkUp,    label: "Top Half",    action: ActionTopHalf},
-		{id: 4, mod: ca, vk: vkDown,  label: "Bottom Half", action: ActionBottomHalf},
+		{id: 1, mod: ca, vk: vkLeft, label: "Left Half", action: ActionLeftHalf},
+		{id: 2, mod: ca, vk: vkRight, label: "Right Half", action: ActionRightHalf},
+		{id: 3, mod: ca, vk: vkUp, label: "Top Half", action: ActionTopHalf},
+		{id: 4, mod: ca, vk: vkDown, label: "Bottom Half", action: ActionBottomHalf},
 
 		// ── Quarters ─────────────────────────────────────────────────────────
-		{id: 10, mod: ca, vk: vkU, label: "Top Left",     action: ActionTopLeft},
-		{id: 11, mod: ca, vk: vkI, label: "Top Right",    action: ActionTopRight},
-		{id: 12, mod: ca, vk: vkJ, label: "Bottom Left",  action: ActionBottomLeft},
+		{id: 10, mod: ca, vk: vkU, label: "Top Left", action: ActionTopLeft},
+		{id: 11, mod: ca, vk: vkI, label: "Top Right", action: ActionTopRight},
+		{id: 12, mod: ca, vk: vkJ, label: "Bottom Left", action: ActionBottomLeft},
 		{id: 13, mod: ca, vk: vkK, label: "Bottom Right", action: ActionBottomRight},
 
 		// ── Thirds ───────────────────────────────────────────────────────────
-		{id: 20, mod: ca, vk: vkD, label: "First Third",       action: ActionFirstThird},
-		{id: 21, mod: ca, vk: vkE, label: "First Two Thirds",  action: ActionFirstTwoThirds},
-		{id: 22, mod: ca, vk: vkF, label: "Center Third",      action: ActionCenterThird},
-		{id: 23, mod: ca, vk: vkT, label: "Last Two Thirds",   action: ActionLastTwoThirds},
-		{id: 24, mod: ca, vk: vkG, label: "Last Third",        action: ActionLastThird},
+		{id: 20, mod: ca, vk: vkD, label: "First Third", action: ActionFirstThird},
+		{id: 21, mod: ca, vk: vkE, label: "First Two Thirds", action: ActionFirstTwoThirds},
+		{id: 22, mod: ca, vk: vkF, label: "Center Third", action: ActionCenterThird},
+		{id: 23, mod: ca, vk: vkT, label: "Last Two Thirds", action: ActionLastTwoThirds},
+		{id: 24, mod: ca, vk: vkG, label: "Last Third", action: ActionLastThird},
 		{id: 25, mod: ca, vk: vkR, label: "Center Two Thirds", action: ActionCenterTwoThirds},
 
 		// ── Maximize ─────────────────────────────────────────────────────────
-		{id: 30, mod: ca,  vk: vkReturn, label: "Maximize",        action: ActionMaximize},
-		{id: 31, mod: cas, vk: vkReturn, label: "Almost Maximize",  action: ActionAlmostMaximize},
-		{id: 32, mod: cas, vk: vkUp,     label: "Maximize Height",  action: ActionMaximizeHeight},
+		{id: 30, mod: ca, vk: vkReturn, label: "Maximize", action: ActionMaximize},
+		{id: 31, mod: cas, vk: vkReturn, label: "Almost Maximize", action: ActionAlmostMaximize},
+		{id: 32, mod: cas, vk: vkUp, label: "Maximize Height", action: ActionMaximizeHeight},
 
 		// ── Center / Resize / Restore ─────────────────────────────────────────
-		{id: 40, mod: ca, vk: vkC,      label: "Center",   action: ActionCenter},
-		{id: 50, mod: ca, vk: vkEqual,  label: "Larger",   action: ActionLarger},
-		{id: 51, mod: ca, vk: vkMinus,  label: "Smaller",  action: ActionSmaller},
+		{id: 40, mod: ca, vk: vkC, label: "Center", action: ActionCenter},
+		{id: 50, mod: ca, vk: vkEqual, label: "Larger", action: ActionLarger},
+		{id: 51, mod: ca, vk: vkMinus, label: "Smaller", action: ActionSmaller},
 		{id: 60, mod: ca, vk: vkBack, label: "Restore (Ctrl+Alt+Backspace)", action: ActionRestore},
 
 		// ── Multi-monitor ────────────────────────────────────────────────────
-		{id: 70, mod: caw, vk: vkRight, label: "Next Display",     action: ActionNextDisplay},
-		{id: 71, mod: caw, vk: vkLeft,  label: "Previous Display", action: ActionPreviousDisplay},
+		{id: 70, mod: caw, vk: vkRight, label: "Next Display", action: ActionNextDisplay},
+		{id: 71, mod: caw, vk: vkLeft, label: "Previous Display", action: ActionPreviousDisplay},
 	}
 
 	var failed []HotKey

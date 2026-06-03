@@ -11,8 +11,8 @@ import (
 // that would otherwise conflict with SnapFlow.
 
 const (
-	regDesktop   = `Control Panel\Desktop`
-	regExplorer  = `SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced`
+	regDesktop  = `Control Panel\Desktop`
+	regExplorer = `SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced`
 )
 
 // WindowsSnapEnabled returns true if Windows built-in snap is active.

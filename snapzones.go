@@ -25,6 +25,7 @@ type SnapZone struct {
 //   - Right edge (middle) → Right Half
 //   - Right edge (lower) → Bottom Right
 //   - Bottom edge → Bottom Half
+//
 // zoneNameToAction maps config zone name strings to WindowAction constants.
 // "compoundThirds" is a UI alias for ActionBottomHalf: when the bottom zone
 // uses this value the gesture engine activates the compound-thirds tracker,
@@ -44,7 +45,7 @@ var zoneNameToAction = map[string]WindowAction{
 	"firstTwoThirds": ActionFirstTwoThirds, "centerTwoThirds": ActionCenterTwoThirds, "lastTwoThirds": ActionLastTwoThirds,
 	// Vertical thirds
 	"topVerticalThird": ActionTopVerticalThird, "middleVerticalThird": ActionMiddleVerticalThird,
-	"bottomVerticalThird": ActionBottomVerticalThird,
+	"bottomVerticalThird":  ActionBottomVerticalThird,
 	"topVerticalTwoThirds": ActionTopVerticalTwoThirds, "bottomVerticalTwoThirds": ActionBottomVerticalTwoThirds,
 	// Horizontal fourths
 	"firstFourth": ActionFirstFourth, "secondFourth": ActionSecondFourth,
@@ -169,25 +170,35 @@ func SnapZonesForWork(work w32.RECT, cfg *AppConfig) []SnapZone {
 	midH := leftEdgeMid.Height()
 
 	// Read per-zone actions from config (with fallback to defaults).
-	aTopLeft     := firstNonNone(zoneAction(cfg.ZoneTopLeft),     ActionTopLeft)
-	aTop         := firstNonNone(zoneAction(cfg.ZoneTop),         ActionMaximize)
-	aTopRight    := firstNonNone(zoneAction(cfg.ZoneTopRight),    ActionTopRight)
-	aLeft        := firstNonNone(zoneAction(cfg.ZoneLeft),        ActionLeftHalf)
-	aRight       := firstNonNone(zoneAction(cfg.ZoneRight),       ActionRightHalf)
-	aBottomLeft  := firstNonNone(zoneAction(cfg.ZoneBottomLeft),  ActionBottomLeft)
-	aBottom      := firstNonNone(zoneAction(cfg.ZoneBottom),      ActionBottomHalf)
+	aTopLeft := firstNonNone(zoneAction(cfg.ZoneTopLeft), ActionTopLeft)
+	aTop := firstNonNone(zoneAction(cfg.ZoneTop), ActionMaximize)
+	aTopRight := firstNonNone(zoneAction(cfg.ZoneTopRight), ActionTopRight)
+	aLeft := firstNonNone(zoneAction(cfg.ZoneLeft), ActionLeftHalf)
+	aRight := firstNonNone(zoneAction(cfg.ZoneRight), ActionRightHalf)
+	aBottomLeft := firstNonNone(zoneAction(cfg.ZoneBottomLeft), ActionBottomLeft)
+	aBottom := firstNonNone(zoneAction(cfg.ZoneBottom), ActionBottomHalf)
 	aBottomRight := firstNonNone(zoneAction(cfg.ZoneBottomRight), ActionBottomRight)
 
 	zones := []SnapZone{}
 
 	// Corners first (highest priority).
-	if aTopLeft != ActionNone     { zones = append(zones, SnapZone{topLeftCorner, aTopLeft}) }
-	if aTopRight != ActionNone    { zones = append(zones, SnapZone{topRightCorner, aTopRight}) }
-	if aBottomLeft != ActionNone  { zones = append(zones, SnapZone{bottomLeftCorner, aBottomLeft}) }
-	if aBottomRight != ActionNone { zones = append(zones, SnapZone{bottomRightCorner, aBottomRight}) }
+	if aTopLeft != ActionNone {
+		zones = append(zones, SnapZone{topLeftCorner, aTopLeft})
+	}
+	if aTopRight != ActionNone {
+		zones = append(zones, SnapZone{topRightCorner, aTopRight})
+	}
+	if aBottomLeft != ActionNone {
+		zones = append(zones, SnapZone{bottomLeftCorner, aBottomLeft})
+	}
+	if aBottomRight != ActionNone {
+		zones = append(zones, SnapZone{bottomRightCorner, aBottomRight})
+	}
 
 	// Top edge.
-	if aTop != ActionNone { zones = append(zones, SnapZone{topEdge, aTop}) }
+	if aTop != ActionNone {
+		zones = append(zones, SnapZone{topEdge, aTop})
+	}
 
 	// Left edge: compound if action is leftHalf — show TopLeft/LeftHalf/BottomLeft.
 	if aLeft != ActionNone {
@@ -222,7 +233,9 @@ func SnapZonesForWork(work w32.RECT, cfg *AppConfig) []SnapZone {
 	}
 
 	// Bottom edge.
-	if aBottom != ActionNone { zones = append(zones, SnapZone{bottomEdge, aBottom}) }
+	if aBottom != ActionNone {
+		zones = append(zones, SnapZone{bottomEdge, aBottom})
+	}
 
 	_ = W
 	_ = H
