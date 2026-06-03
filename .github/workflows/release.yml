@@ -88,12 +88,18 @@ jobs:
           if (-not (Test-Path $iscc)) { throw "ISCC not found" }
           & $iscc "scripts\installer.iss" "/DAppVersion=$ver"
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
-          $src = Get-ChildItem dist\SnapFlow-Setup.exe -ErrorAction SilentlyContinue
-          if ($src) { Rename-Item $src.FullName "SnapFlow-$ver-Setup.exe" }
+
+          # Versioned name for tag releases; fixed name for rolling latest
+          $src = Get-ChildItem dist\SnapFlow-Setup.exe
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            Rename-Item $src.FullName "SnapFlow-$ver-Setup.exe"
+          } else {
+            Rename-Item $src.FullName "SnapFlow-latest-Setup.exe"
+          }
           Get-ChildItem dist\ | Format-Table Name, @{N='Size(KB)';E={[int]($_.Length/1KB)}}
 
       # ── Publish ───────────────────────────────────────────────────────────
-      - name: Publish versioned release
+      - name: Publish versioned release  (tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2.3.2
         with:
@@ -111,26 +117,27 @@ jobs:
             **Requires [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)**
             (pre-installed on Windows 11; available via Windows Update on Windows 10).
           files: |
-            dist/SnapFlow-*-Setup.exe
+            dist/SnapFlow-${{ steps.ver.outputs.VERSION }}-Setup.exe
             dist/snapflow.exe
           prerelease: ${{ contains(steps.ver.outputs.VERSION, '-') }}
 
-      - name: Publish latest pre-release
+      - name: Publish rolling latest  (main branch)
         if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2.3.2
-        with:
-          tag_name: latest
-          name: "Latest build (main)"
-          body: |
-            Auto-built from commit ${{ github.sha }} on `main`.
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $sha  = '${{ github.sha }}'
+          $date = Get-Date -Format 'yyyy-MM-dd HH:mm UTC'
 
-            > **Development build** — for stable releases see the [Releases page](../../releases).
+          # Delete the old "latest" release + tag so we start clean each time.
+          # Errors are silenced — the release may not exist on first run.
+          gh release delete latest --yes --cleanup-tag 2>$null; $true
 
-            | File | Description |
-            |---|---|
-            | `SnapFlow-*-Setup.exe` | Installer — recommended |
-            | `snapflow.exe` | Portable — no install needed |
-          files: |
-            dist/SnapFlow-*-Setup.exe
-            dist/snapflow.exe
-          prerelease: true
+          # Create a fresh release with exactly two fixed-name assets.
+          gh release create latest `
+            --prerelease `
+            --title "Latest build (main)" `
+            --notes "Built from commit ``$sha`` on ``main`` — $date.``n``n> Development build. For stable releases see the [Releases page](../../releases)." `
+            "dist\SnapFlow-latest-Setup.exe" `
+            "dist\snapflow.exe"
