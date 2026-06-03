@@ -102,7 +102,7 @@ func (s *ConfigStore) Path() string { return s.path }
 func defaultConfig() *AppConfig {
 	return &AppConfig{
 		Version:               configVersion,
-		EdgeThresholdPx:       46,
+		EdgeThresholdPx:       12,
 		CornerSnapAreaSize:    20,
 		ShortEdgeSnapAreaSize: 145,
 		GapSize:               0,

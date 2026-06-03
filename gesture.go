@@ -128,7 +128,7 @@ func (g *GestureInterpreter) Update(cursor w32.POINT, work w32.RECT) WindowActio
 func cursorInBottomZone(cursor w32.POINT, work w32.RECT, cfg *AppConfig) bool {
 	edgeW := int32(cfg.EdgeThresholdPx)
 	if edgeW <= 0 {
-		edgeW = 46
+		edgeW = 12
 	}
 	corner := int32(cfg.CornerSnapAreaSize)
 	if corner <= 0 {

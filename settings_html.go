@@ -218,7 +218,7 @@ const LANGS = {
     thirdsL1:'In the <b>first third</b> → snaps to left 1/3',
     thirdsL2:'<b>Drag across two thirds</b> → snaps to 2/3',
     thirdsL3:'<b>All three thirds</b> → maximizes',
-    gSnapZones:'Snap Zones',gEdge:'Edge threshold',gEdgeSub:'Distance from screen edge to activate snap',
+    gSnapZones:'Snap Zones',gEdge:'Edge threshold',gEdgeSub:'How close the cursor must get to the screen edge to trigger snap (px). Lower = must push harder to the edge.',
     gCorner:'Corner hot zone',gCornerSub:'Size of corner snap squares',
     gShort:'Short edge zone',gShortSub:'Top/bottom band height on left/right edges',
     gGap:'Gap Between Windows',gGapSize:'Gap size',gGapSizeSub:'Space inserted between snapped windows',
@@ -238,7 +238,7 @@ const LANGS = {
     thirdsL1:'En el <b>primer tercio</b> → ocupa 1/3 izquierdo',
     thirdsL2:'<b>Arrastra entre dos tercios</b> → ocupa 2/3',
     thirdsL3:'<b>Los tres tercios</b> → maximiza',
-    gSnapZones:'Zonas de ajuste',gEdge:'Umbral de borde',gEdgeSub:'Distancia desde el borde de pantalla para activar el ajuste',
+    gSnapZones:'Zonas de ajuste',gEdge:'Umbral de borde',gEdgeSub:'Qué cerca debe llegar el cursor al borde para activar el ajuste (px). Menor = hay que empujar más hasta el borde.',
     gCorner:'Zona de esquina',gCornerSub:'Tamaño de los cuadrados de esquina',
     gShort:'Zona de borde corto',gShortSub:'Altura de la banda superior/inferior en bordes izq/der',
     gGap:'Espacio entre ventanas',gGapSize:'Tamaño del espacio',gGapSizeSub:'Espacio entre ventanas ajustadas',
@@ -559,7 +559,7 @@ function save(){
   }));
 }
 function resetDefaults(){
-  const d={edgeThreshold:46,cornerSize:20,shortEdgeSize:145,
+  const d={edgeThreshold:12,cornerSize:20,shortEdgeSize:145,
            gapSize:0,almostMaxWidth:90,almostMaxHeight:90,sizeStep:30};
   Object.entries(d).forEach(([k,v])=>{const el=document.getElementById(k);if(el)el.value=v;});
   const z={topLeft:'topLeft',top:'maximize',topRight:'topRight',

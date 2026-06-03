@@ -88,7 +88,7 @@ func SnapZonesForWork(work w32.RECT, cfg *AppConfig) []SnapZone {
 	}
 	edgeW := int32(cfg.EdgeThresholdPx)
 	if edgeW <= 0 {
-		edgeW = 46
+		edgeW = 12
 	}
 
 	// Clamp so zones never overlap each other badly on small screens.
