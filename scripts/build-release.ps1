@@ -76,15 +76,10 @@ if (-not $iscc) {
     $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 }
 
-# Copy exe to root so installer can find it
-Copy-Item $exe snapflow.exe -Force
-
 Write-Host "Creating installer..." -ForegroundColor Cyan
-& $iscc "scripts\installer.iss" "/DAppVersion=$Version" | Tee-Object -Variable isccOut
-$ok = $LASTEXITCODE -eq 0
-
-Remove-Item snapflow.exe -Force -ErrorAction SilentlyContinue
-if (-not $ok) { throw "ISCC failed" }
+# installer.iss uses paths relative to scripts/ — just call iscc from repo root
+& $iscc "scripts\installer.iss" "/DAppVersion=$Version"
+if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
 $installer = Get-ChildItem dist\SnapFlow-Setup*.exe | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 Write-Host "Installer: $($installer.FullName)  ($([int]($installer.Length/1KB)) KB)" -ForegroundColor Green

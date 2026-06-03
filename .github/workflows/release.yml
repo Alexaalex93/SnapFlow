@@ -1,7 +1,7 @@
 name: Release
 
-# Runs on every push to main → updates a rolling "latest" pre-release.
-# Runs on version tags (v*) → creates a proper versioned release.
+# Every push to main → updates the rolling "latest" pre-release.
+# Every version tag (v*)  → creates a proper versioned release.
 on:
   push:
     branches: [main]
@@ -13,7 +13,6 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -22,26 +21,26 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # ── Determine version string ───────────────────────────────────────────
+      # ── Version string ────────────────────────────────────────────────────
       - name: Set version
         id: ver
         shell: pwsh
         run: |
           if ('${{ github.ref_type }}' -eq 'tag') {
-            $v = '${{ github.ref_name }}' -replace '^v',''
+            $v = '${{ github.ref_name }}' -replace '^v', ''
           } else {
-            $sha = '${{ github.sha }}'.Substring(0,7)
-            $v   = "0.0.0-dev.$sha"
+            $short = '${{ github.sha }}'.Substring(0, 7)
+            $v = "0.0.0-dev+$short"
           }
-          Write-Host "VERSION=$v"
-          echo "VERSION=$v" >> $env:GITHUB_OUTPUT
+          "VERSION=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Version: $v"
 
-      # ── Generate icon ──────────────────────────────────────────────────────
+      # ── Icon ─────────────────────────────────────────────────────────────
       - name: Generate icon
         shell: pwsh
         run: .\scripts\make-icon.ps1
 
-      # ── Embed icon + version info ──────────────────────────────────────────
+      # ── Embed version + icon into exe ─────────────────────────────────────
       - name: Install goversioninfo
         run: go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
 
@@ -50,49 +49,57 @@ jobs:
         run: |
           $ver = '${{ steps.ver.outputs.VERSION }}'
           $vi  = Get-Content versioninfo.json -Raw | ConvertFrom-Json
-          $p   = ($ver -split '-')[0] -split '\.'
-          foreach ($f in @('FileVersion','ProductVersion')) {
-            $vi.FixedFileInfo.$f.Major = [int]($p[0] ?? 1)
-            $vi.FixedFileInfo.$f.Minor = [int]($p[1] ?? 0)
-            $vi.FixedFileInfo.$f.Patch = [int]($p[2] ?? 0)
-          }
-          $vi.StringFileInfo.FileVersion    = "$ver"
-          $vi.StringFileInfo.ProductVersion = "$ver"
+          $p   = ($ver -split '[.\-+]')
+          $vi.FixedFileInfo.FileVersion.Major    = [int]($p[0] -replace '[^0-9]')
+          $vi.FixedFileInfo.FileVersion.Minor    = [int]($p[1] -replace '[^0-9]')
+          $vi.FixedFileInfo.FileVersion.Patch    = [int]($p[2] -replace '[^0-9]')
+          $vi.FixedFileInfo.ProductVersion.Major = [int]($p[0] -replace '[^0-9]')
+          $vi.FixedFileInfo.ProductVersion.Minor = [int]($p[1] -replace '[^0-9]')
+          $vi.FixedFileInfo.ProductVersion.Patch = [int]($p[2] -replace '[^0-9]')
+          $vi.StringFileInfo.FileVersion    = $ver
+          $vi.StringFileInfo.ProductVersion = $ver
           $vi | ConvertTo-Json -Depth 10 | Set-Content versioninfo.json -Encoding utf8
 
-      - name: go generate (resource.syso)
+      - name: go generate  (resource.syso)
         run: go generate
 
-      # ── Build exe ──────────────────────────────────────────────────────────
-      - name: Build
+      # ── Build exe ─────────────────────────────────────────────────────────
+      - name: Build exe
         shell: pwsh
         run: |
           $ver = '${{ steps.ver.outputs.VERSION }}'
           New-Item -ItemType Directory -Force dist | Out-Null
           go build -ldflags "-H=windowsgui -s -w -X main.appVersion=$ver" -o dist\snapflow.exe .
-          Write-Host "Built: $([int]((Get-Item dist\snapflow.exe).Length/1KB)) KB"
+          $kb = [int]((Get-Item dist\snapflow.exe).Length / 1KB)
+          Write-Host "snapflow.exe — ${kb} KB"
 
-      # ── Create installer with Inno Setup ───────────────────────────────────
+      # ── Installer with Inno Setup (via Chocolatey) ────────────────────────
       - name: Install Inno Setup
         shell: pwsh
-        run: choco install innosetup --yes --no-progress
+        run: choco install innosetup --yes --no-progress --ignore-checksums
 
       - name: Build installer
         shell: pwsh
         run: |
           $ver  = '${{ steps.ver.outputs.VERSION }}'
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          Copy-Item dist\snapflow.exe snapflow.exe -Force
-          & $iscc scripts\installer.iss "/DAppVersion=$ver"
-          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
-          Remove-Item snapflow.exe -Force
-          # Rename to include version
-          $src = Get-ChildItem dist\SnapFlow-Setup.exe | Select-Object -First 1
-          if ($src) { Rename-Item $src.FullName "SnapFlow-$ver-Setup.exe" }
-          Get-ChildItem dist\
+          if (-not (Test-Path $iscc)) { throw "ISCC not found at $iscc" }
 
-      # ── Publish GitHub Release ─────────────────────────────────────────────
-      - name: Publish release (versioned tag)
+          # Run from repo root — installer.iss uses relative paths from scripts/
+          & $iscc "scripts\installer.iss" "/DAppVersion=$ver"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed (exit $LASTEXITCODE)" }
+
+          # Rename to include version
+          $out = "dist\SnapFlow-Setup.exe"
+          if (Test-Path $out) {
+            Rename-Item $out "SnapFlow-$ver-Setup.exe"
+          }
+
+          Write-Host "dist/ contents:"
+          Get-ChildItem dist\ | Format-Table Name, Length
+
+      # ── Publish ───────────────────────────────────────────────────────────
+      - name: Publish versioned release  (tag push)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
@@ -100,35 +107,39 @@ jobs:
           body: |
             ## Install
 
-            Download **SnapFlow-${{ steps.ver.outputs.VERSION }}-Setup.exe** and run it.
+            Download and run **SnapFlow-${{ steps.ver.outputs.VERSION }}-Setup.exe**.
 
-            The installer will:
-            - Install SnapFlow to `%LOCALAPPDATA%\SnapFlow`
-            - Optionally create a desktop shortcut
-            - Optionally start SnapFlow at login
-            - Register an uninstaller in Add/Remove Programs
+            The installer:
+            - Installs to `%LOCALAPPDATA%\SnapFlow` (no admin required)
+            - Optional desktop shortcut
+            - Optional autostart at login
+            - Uninstaller in Add/Remove Programs
 
-            **Requires [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)** (pre-installed on Windows 11; auto-updated on Windows 10 via Windows Update).
+            **Requires [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)**
+            (pre-installed on Windows 11; available via Windows Update on Windows 10).
           files: |
             dist/SnapFlow-*-Setup.exe
             dist/snapflow.exe
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(steps.ver.outputs.VERSION, '-') }}
+          fail_on_unmatched_files: true
 
-      - name: Publish rolling "latest" release (main branch)
+      - name: Publish rolling "latest" release  (main branch push)
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: "Latest build (main)"
           body: |
-            Automatically built from the latest commit on `main`.
+            Automatically built from the latest commit on `main` — ${{ github.sha }}.
 
-            > **This is a development build** — for stable releases see the [Releases page](../../releases).
+            > **Development build** — for stable releases see the [Releases page](../../releases).
 
-            **Files:**
-            - `SnapFlow-*-Setup.exe` — installer (recommended)
-            - `snapflow.exe` — portable executable (no install needed)
+            | File | Description |
+            |---|---|
+            | `SnapFlow-*-Setup.exe` | Installer — recommended |
+            | `snapflow.exe` | Portable — just run, no install needed |
           files: |
             dist/SnapFlow-*-Setup.exe
             dist/snapflow.exe
           prerelease: true
+          fail_on_unmatched_files: true
