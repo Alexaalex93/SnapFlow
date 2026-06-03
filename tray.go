@@ -21,6 +21,7 @@ const (
 	menuOpenConfig   = 1003
 	menuQuit         = 1004
 	menuDisableWSnap = 1005
+	menuCheckUpdate  = 1006
 )
 
 var (
@@ -107,6 +108,8 @@ var trayWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) ui
 			} else {
 				EnableWindowsSnap()
 			}
+		case menuCheckUpdate:
+			go checkForUpdates(false)
 		case menuQuit:
 			removeTrayIcon()
 			postToMain(wmDoQuit, 0, 0)
@@ -241,6 +244,7 @@ func showTrayMenu(hwnd w32.HWND) {
 	sep := func() { procAppendMenuW.Call(hMenu, mfSeparator, 0, 0) }
 
 	add(menuSettings, "Settings…")
+	add(menuCheckUpdate, "Check for updates…")
 	sep()
 	// Show Windows Snap toggle — it interferes with SnapFlow drag gestures.
 	snapOn := WindowsSnapEnabled()

@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"snapflow/w32ex"
@@ -66,6 +67,13 @@ func main() {
 	if err := initTray(); err != nil {
 		fmt.Fprintf(os.Stderr, "warn: tray: %v\n", err)
 	}
+
+	// Silent update check on startup — only shows a dialog if a new version
+	// is available. Runs in background so it never delays startup.
+	go func() {
+		time.Sleep(5 * time.Second) // wait until app is fully running
+		checkForUpdates(true)
+	}()
 
 	go func() {
 		c := make(chan os.Signal, 1)
