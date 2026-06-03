@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	webview "github.com/jchv/go-webview2"
 )
@@ -276,12 +277,17 @@ func runSettingsWindow() {
 		default:
 		}
 		postToMain(wmApplyCfg, 0, 0)
-		// Show "Saved ✓" briefly, then close the settings window.
-		w.Eval("window.showSaved(); setTimeout(goClose, 600);")
-	})
 
-	w.Bind("goClose", func() {
-		w.Terminate()
+		// w.Eval() cannot be called from inside a w.Bind() callback —
+		// it tries to dispatch back to the WebView thread that is currently
+		// waiting for this callback to return, causing a deadlock.
+		// Run on a separate goroutine so the callback returns first.
+		go func() {
+			time.Sleep(30 * time.Millisecond) // let the callback return
+			w.Eval("window.showSaved()")
+			time.Sleep(600 * time.Millisecond) // show "Saved ✓" briefly
+			w.Terminate()                      // close the window
+		}()
 	})
 
 	w.Bind("goOpenConfigFile", func() {
