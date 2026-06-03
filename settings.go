@@ -276,7 +276,12 @@ func runSettingsWindow() {
 		default:
 		}
 		postToMain(wmApplyCfg, 0, 0)
-		w.Eval("window.showSaved()")
+		// Show "Saved ✓" briefly, then close the settings window.
+		w.Eval("window.showSaved(); setTimeout(goClose, 600);")
+	})
+
+	w.Bind("goClose", func() {
+		w.Terminate()
 	})
 
 	w.Bind("goOpenConfigFile", func() {
