@@ -1,5 +1,12 @@
 name: Release
 
+# Every push to main builds and publishes a versioned release.
+# Version is read from the VERSION file in the repo root.
+# To ship a new version: update VERSION, commit, push.
+#
+# Tags (v*) also trigger a release using the tag version — useful if you
+# want to release a hotfix at a specific commit without touching VERSION.
+
 on:
   push:
     branches: [main]
@@ -23,20 +30,22 @@ jobs:
           cache: true
 
       # ── Version ───────────────────────────────────────────────────────────
-      - name: Set version
+      - name: Read version
         id: ver
         shell: pwsh
         run: |
           if ('${{ github.ref_type }}' -eq 'tag') {
+            # Tag push: use the tag (e.g. v1.2.3 → 1.2.3)
             $v = '${{ github.ref_name }}' -replace '^v', ''
           } else {
-            $short = '${{ github.sha }}'.Substring(0, 7)
-            $v = "0.0.0-dev+$short"
+            # Branch push: read VERSION file
+            $v = (Get-Content VERSION -Raw).Trim()
           }
           "VERSION=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "TAG=v$v"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Version: $v"
 
-      # ── Icon (use Windows PowerShell 5.1 — needed for System.Drawing) ───
+      # ── Icon ─────────────────────────────────────────────────────────────
       - name: Regenerate icon
         shell: powershell
         run: .\scripts\make-icon.ps1
@@ -88,56 +97,37 @@ jobs:
           if (-not (Test-Path $iscc)) { throw "ISCC not found" }
           & $iscc "scripts\installer.iss" "/DAppVersion=$ver"
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
-
-          # Versioned name for tag releases; fixed name for rolling latest
-          $src = Get-ChildItem dist\SnapFlow-Setup.exe
-          if ('${{ github.ref_type }}' -eq 'tag') {
-            Rename-Item $src.FullName "SnapFlow-$ver-Setup.exe"
-          } else {
-            Rename-Item $src.FullName "SnapFlow-latest-Setup.exe"
-          }
+          # Name the installer with the version number
+          Rename-Item dist\SnapFlow-Setup.exe "SnapFlow-$ver-Setup.exe"
           Get-ChildItem dist\ | Format-Table Name, @{N='Size(KB)';E={[int]($_.Length/1KB)}}
 
       # ── Publish ───────────────────────────────────────────────────────────
-      - name: Publish versioned release  (tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2.3.2
-        with:
-          name: SnapFlow ${{ github.ref_name }}
-          body: |
-            ## Install
-
-            Download and run **SnapFlow-${{ steps.ver.outputs.VERSION }}-Setup.exe**.
-
-            - Installs to `%LOCALAPPDATA%\SnapFlow` (no admin required)
-            - Optional desktop shortcut
-            - Optional autostart at login
-            - Uninstaller in Add/Remove Programs
-
-            **Requires [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)**
-            (pre-installed on Windows 11; available via Windows Update on Windows 10).
-          files: |
-            dist/SnapFlow-${{ steps.ver.outputs.VERSION }}-Setup.exe
-            dist/snapflow.exe
-          prerelease: ${{ contains(steps.ver.outputs.VERSION, '-') }}
-
-      - name: Publish rolling latest  (main branch)
-        if: github.ref == 'refs/heads/main'
+      - name: Publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $sha  = '${{ github.sha }}'
-          $date = Get-Date -Format 'yyyy-MM-dd HH:mm UTC'
+          $ver = '${{ steps.ver.outputs.VERSION }}'
+          $tag = '${{ steps.ver.outputs.TAG }}'
 
-          # Delete the old "latest" release + tag so we start clean each time.
-          # Errors are silenced — the release may not exist on first run.
-          gh release delete latest --yes --cleanup-tag 2>$null; $true
+          # If a release for this version already exists, delete it first
+          # so we get a clean replace (same version, new build).
+          gh release delete $tag --yes --cleanup-tag 2>$null; $true
 
-          # Create a fresh release with exactly two fixed-name assets.
-          gh release create latest `
-            --prerelease `
-            --title "Latest build (main)" `
-            --notes "Built from commit ``$sha`` on ``main`` — $date.``n``n> Development build. For stable releases see the [Releases page](../../releases)." `
-            "dist\SnapFlow-latest-Setup.exe" `
+          gh release create $tag `
+            --title "SnapFlow v$ver" `
+            --notes @"
+          ## Install
+
+          Download and run **SnapFlow-$ver-Setup.exe**.
+
+          - Installs to ``%LOCALAPPDATA%\SnapFlow`` (no admin required)
+          - Optional desktop shortcut
+          - Optional autostart at login
+          - Uninstaller in Add/Remove Programs
+
+          **Requires [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)**
+          (pre-installed on Windows 11; available via Windows Update on Windows 10).
+          "@ `
+            "dist\SnapFlow-$ver-Setup.exe" `
             "dist\snapflow.exe"
