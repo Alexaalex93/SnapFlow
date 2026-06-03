@@ -27,8 +27,11 @@ jobs:
       - name: go mod tidy
         run: go mod tidy && git diff --no-patch --exit-code go.mod go.sum
 
+      # SnapFlow is Windows-only: registry and w32ex packages have
+      # //go:build windows constraints that exclude them on Linux.
+      # GOOS=windows tells the toolchain to resolve Windows build tags.
       - name: go vet
-        run: go vet ./...
+        run: GOOS=windows go vet ./...
 
   build:
     runs-on: windows-latest
