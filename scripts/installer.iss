@@ -50,7 +50,7 @@ Name: "{commondesktop}\{#AppName}";   Filename: "{app}\{#AppExe}"; Tasks: deskto
 
 [Tasks]
 Name: desktopicon; Description: "Create a &desktop shortcut";            Flags: unchecked
-Name: autostart;   Description: "&Start SnapFlow automatically at login"; Flags: checked
+Name: autostart;   Description: "&Start SnapFlow automatically at login"
 
 [Registry]
 Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; \
