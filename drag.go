@@ -84,13 +84,16 @@ func (d *DragManager) onMoveStart(hwnd w32.HWND) {
 		return
 	}
 	rect := w32.GetWindowRect(hwnd)
+	if rect == nil {
+		// Can't determine pre-snap position — skip this drag entirely so
+		// onMoveEnd never applies a snap to a zero RECT.
+		return
+	}
 	d.mu.Lock()
 	d.active = true
 	d.hwnd = hwnd
 	d.workArea = work
-	if rect != nil {
-		d.preSnap = *rect
-	}
+	d.preSnap = *rect
 	d.mu.Unlock()
 	d.gest.Begin(hwnd, work)
 	d.overlay.Hide()

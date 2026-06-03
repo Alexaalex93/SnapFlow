@@ -232,37 +232,50 @@ func runSettingsWindow() {
 	w.Bind("goSaveSettings", func(payload string) {
 		var p SavePayload
 		if err := json.Unmarshal([]byte(payload), &p); err != nil {
-			fmt.Printf("settings save: %v\n", err)
+			fmt.Fprintf(os.Stderr, "settings save: %v\n", err)
 			return
 		}
+
+		// Build a new config value — do NOT mutate appCfg directly here because
+		// this callback runs in the WebView goroutine while the main OS thread
+		// reads appCfg from WinEvent callbacks. We post the new config through
+		// cfgUpdateCh so the main thread applies it safely via wmApplyCfg.
 		g := p.General
-		appCfg.EdgeThresholdPx = g.EdgeThreshold
-		appCfg.CornerSnapAreaSize = g.CornerSize
-		appCfg.ShortEdgeSnapAreaSize = g.ShortEdgeSize
-		appCfg.GapSize = g.GapSize
-		appCfg.AlmostMaximizeWidth = g.AlmostMaxWidth / 100.0
-		appCfg.AlmostMaximizeHeight = g.AlmostMaxHeight / 100.0
-		appCfg.SizeOffset = g.SizeStep
+		newCfg := *appCfg // shallow copy of current values
+		newCfg.EdgeThresholdPx = g.EdgeThreshold
+		newCfg.CornerSnapAreaSize = g.CornerSize
+		newCfg.ShortEdgeSnapAreaSize = g.ShortEdgeSize
+		newCfg.GapSize = g.GapSize
+		newCfg.AlmostMaximizeWidth = g.AlmostMaxWidth / 100.0
+		newCfg.AlmostMaximizeHeight = g.AlmostMaxHeight / 100.0
+		newCfg.SizeOffset = g.SizeStep
 
 		sa := p.SnapAreas
-		appCfg.SnapByDragging = sa.SnapByDragging
-		appCfg.RestoreSize = sa.RestoreSize
-		appCfg.AnimateFootprint = sa.AnimateFootprint
-		appCfg.ZoneTopLeft = sa.TopLeft
-		appCfg.ZoneTop = sa.Top
-		appCfg.ZoneTopRight = sa.TopRight
-		appCfg.ZoneLeft = sa.Left
-		appCfg.ZoneRight = sa.Right
-		appCfg.ZoneBottomLeft = sa.BottomLeft
-		appCfg.ZoneBottom = sa.Bottom
-		appCfg.ZoneBottomRight = sa.BottomRight
+		newCfg.SnapByDragging = sa.SnapByDragging
+		newCfg.RestoreSize = sa.RestoreSize
+		newCfg.AnimateFootprint = sa.AnimateFootprint
+		newCfg.ZoneTopLeft = sa.TopLeft
+		newCfg.ZoneTop = sa.Top
+		newCfg.ZoneTopRight = sa.TopRight
+		newCfg.ZoneLeft = sa.Left
+		newCfg.ZoneRight = sa.Right
+		newCfg.ZoneBottomLeft = sa.BottomLeft
+		newCfg.ZoneBottom = sa.Bottom
+		newCfg.ZoneBottomRight = sa.BottomRight
 
 		if appCfgStore != nil {
-			_ = appCfgStore.Save(appCfg)
+			if err := appCfgStore.Save(&newCfg); err != nil {
+				fmt.Fprintf(os.Stderr, "settings save to disk: %v\n", err)
+			}
 		}
-		if dragMgr != nil {
-			dragMgr.gest.UpdateConfig(appCfg)
+
+		// Deliver to main thread (non-blocking: drop if channel already full,
+		// meaning a previous save hasn't been consumed yet — the next will win).
+		select {
+		case cfgUpdateCh <- &newCfg:
+		default:
 		}
+		postToMain(wmApplyCfg, 0, 0)
 		w.Eval("window.showSaved()")
 	})
 

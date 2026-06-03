@@ -27,6 +27,9 @@ func applyResize(hwnd w32.HWND, f resizeFunc) (bool, error) {
 	hdc := w32.GetDC(hwnd)
 	displayDPI := w32.GetDeviceCaps(hdc, w32.LOGPIXELSY)
 	w32.ReleaseDC(hwnd, hdc)
+	if displayDPI == 0 {
+		displayDPI = 96 // fallback to standard DPI if GetDC/GetDeviceCaps failed
+	}
 
 	var monInfo w32.MONITORINFO
 	if !w32.GetMonitorInfo(mon, &monInfo) {
@@ -138,15 +141,19 @@ func moveToDisplayByIndex(hwnd w32.HWND, idx int) {
 
 func moveToMonitor(hwnd w32.HWND, from, to w32.HMONITOR) {
 	var fromInfo, toInfo w32.MONITORINFO
-	w32.GetMonitorInfo(from, &fromInfo)
-	w32.GetMonitorInfo(to, &toInfo)
-
+	if !w32.GetMonitorInfo(from, &fromInfo) || !w32.GetMonitorInfo(to, &toInfo) {
+		return
+	}
 	rect := w32.GetWindowRect(hwnd)
 	if rect == nil {
 		return
 	}
 	fw, fh := float64(fromInfo.RcWork.Width()), float64(fromInfo.RcWork.Height())
 	tw, th := float64(toInfo.RcWork.Width()), float64(toInfo.RcWork.Height())
+	// Guard against zero-size source work area (degenerate/disconnected monitor).
+	if fw == 0 || fh == 0 {
+		return
+	}
 
 	relX := float64(rect.Left-fromInfo.RcWork.Left) / fw
 	relY := float64(rect.Top-fromInfo.RcWork.Top) / fh

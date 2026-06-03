@@ -22,6 +22,14 @@ const (
 	wmOpenConfig   = w32.WM_APP + 3
 )
 
+// cfgUpdateCh carries config updates from the settings WebView goroutine to the
+// main OS thread, where appCfg is also read by WinEvent callbacks. This avoids
+// a data race: the channel write (settings goroutine) and the channel read
+// (main thread msgLoop via wmApplyCfg) are the only two access paths.
+var cfgUpdateCh = make(chan *AppConfig, 1)
+
+const wmApplyCfg = w32.WM_APP + 4
+
 var (
 	appCfg       *AppConfig
 	appCfgStore  *ConfigStore

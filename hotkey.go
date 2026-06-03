@@ -80,6 +80,17 @@ func msgLoop() error {
 			if appCfgStore != nil {
 				w32.ShellExecute(0, "open", appCfgStore.Path(), "", "", w32.SW_SHOWNORMAL)
 			}
+		case wmApplyCfg:
+			// Receive a config update posted by the settings WebView goroutine.
+			// Reading appCfg happens only on this thread, so no lock needed here.
+			select {
+			case newCfg := <-cfgUpdateCh:
+				appCfg = newCfg
+				if dragMgr != nil {
+					dragMgr.gest.UpdateConfig(newCfg)
+				}
+			default:
+			}
 
 		case wmDoQuit:
 			return nil

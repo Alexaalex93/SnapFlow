@@ -1,17 +1,27 @@
 package main
 
-import "github.com/gonutz/w32/v2"
+import (
+	"sync"
+
+	"github.com/gonutz/w32/v2"
+)
 
 // GestureInterpreter tracks a window drag and maps cursor position
 // to a WindowAction via snap zones.
 // Translates Rectangle's SnappingManager drag detection logic.
+//
+// Threading: Begin/Update/End/CurrentAction are called from the WinEvent
+// callback (main OS thread). UpdateConfig is called from the settings
+// save path (WebView goroutine). The cfgMu read-write mutex makes cfg
+// access safe across those two paths.
 type GestureInterpreter struct {
+	cfgMu sync.RWMutex
 	cfg   *AppConfig
 	state gestureState
 }
 
 // bottomZoneState tracks cursor horizontal extent while in the bottom snap zone.
-// This enables the "compound thirds" behavior: drag across multiple thirds to
+// This enables the "compound thirds" behaviour: drag across multiple thirds to
 // snap the window to the combined area (like Rectangle's ThirdsCompoundCalculation).
 type bottomZoneState struct {
 	active bool
@@ -32,16 +42,26 @@ func NewGestureInterpreter(cfg *AppConfig) *GestureInterpreter {
 	return &GestureInterpreter{cfg: cfg}
 }
 
+// UpdateConfig replaces the active config. Safe to call from any goroutine.
 func (g *GestureInterpreter) UpdateConfig(cfg *AppConfig) {
+	g.cfgMu.Lock()
 	g.cfg = cfg
+	g.cfgMu.Unlock()
+}
+
+func (g *GestureInterpreter) readCfg() *AppConfig {
+	g.cfgMu.RLock()
+	defer g.cfgMu.RUnlock()
+	return g.cfg
 }
 
 func (g *GestureInterpreter) Begin(hwnd w32.HWND, work w32.RECT) {
+	cfg := g.readCfg()
 	g.state = gestureState{
 		active:     true,
 		hwnd:       hwnd,
 		lastAction: ActionNone,
-		zones:      SnapZonesForWork(work, g.cfg),
+		zones:      SnapZonesForWork(work, cfg),
 		work:       work,
 	}
 }
@@ -55,9 +75,11 @@ func (g *GestureInterpreter) Update(cursor w32.POINT, work w32.RECT) WindowActio
 	if !g.state.active {
 		return ActionNone
 	}
+	cfg := g.readCfg()
+
 	// Rebuild zones if the monitor changed.
 	if len(g.state.zones) == 0 || !rectEqual(&g.state.work, &work) {
-		g.state.zones = SnapZonesForWork(work, g.cfg)
+		g.state.zones = SnapZonesForWork(work, cfg)
 		g.state.work = work
 	}
 
@@ -70,7 +92,7 @@ func (g *GestureInterpreter) Update(cursor w32.POINT, work w32.RECT) WindowActio
 		action == ActionCenterThird || action == ActionLastThird ||
 		action == ActionFirstTwoThirds || action == ActionLastTwoThirds {
 
-		inBottom := cursorInBottomZone(cursor, work, g.cfg)
+		inBottom := cursorInBottomZone(cursor, work, cfg)
 		if inBottom {
 			if !g.state.bottom.active {
 				// Entering the bottom zone — start tracking.
@@ -120,7 +142,7 @@ func cursorInBottomZone(cursor w32.POINT, work w32.RECT, cfg *AppConfig) bool {
 // bottomThirdsAction calculates which snap action to apply based on how far
 // the cursor has been dragged horizontally within the bottom zone.
 //
-// Rules (matching Rectangle's compound thirds behavior):
+// Rules (matching Rectangle's compound thirds behaviour):
 //
 //	Left third only              → FirstThird   (left 1/3 of screen)
 //	Center third only            → CenterThird
@@ -151,11 +173,4 @@ func bottomThirdsAction(work w32.RECT, xMin, xMax int32) WindowAction {
 	default:
 		return ActionCenterThird
 	}
-}
-
-func abs32(v int32) int32 {
-	if v < 0 {
-		return -v
-	}
-	return v
 }

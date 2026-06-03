@@ -559,22 +559,35 @@ func (a WindowAction) Calculate(work, cur w32.RECT, cfg *AppConfig) w32.RECT {
 	return work
 }
 
+// clampToWork translates r so it fits entirely within work, preserving size
+// where possible. If r is larger than work in either dimension it is shrunk to
+// fit — this prevents Left>Right or Top>Bottom reaching SetWindowPos.
 func clampToWork(r, work w32.RECT) w32.RECT {
-	if r.Left < work.Left {
-		r.Right += work.Left - r.Left
-		r.Left = work.Left
+	// Horizontal
+	if r.Width() > work.Width() {
+		r.Left, r.Right = work.Left, work.Right
+	} else {
+		if r.Left < work.Left {
+			r.Right += work.Left - r.Left
+			r.Left = work.Left
+		}
+		if r.Right > work.Right {
+			r.Left -= r.Right - work.Right
+			r.Right = work.Right
+		}
 	}
-	if r.Right > work.Right {
-		r.Left -= r.Right - work.Right
-		r.Right = work.Right
-	}
-	if r.Top < work.Top {
-		r.Bottom += work.Top - r.Top
-		r.Top = work.Top
-	}
-	if r.Bottom > work.Bottom {
-		r.Top -= r.Bottom - work.Bottom
-		r.Bottom = work.Bottom
+	// Vertical
+	if r.Height() > work.Height() {
+		r.Top, r.Bottom = work.Top, work.Bottom
+	} else {
+		if r.Top < work.Top {
+			r.Bottom += work.Top - r.Top
+			r.Top = work.Top
+		}
+		if r.Bottom > work.Bottom {
+			r.Top -= r.Bottom - work.Bottom
+			r.Bottom = work.Bottom
+		}
 	}
 	return r
 }

@@ -96,10 +96,11 @@ var overlayWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr)
 		var ps paintStruct
 		hdc, _, _ := procBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 		if hdc != 0 {
-			rc := w32.GetClientRect(w32.HWND(hwnd))
+			// Use the paint rect from PAINTSTRUCT — avoids a GetClientRect call
+			// and is always valid (it comes from BeginPaint, not a separate call).
 			brush, _, _ := procCreateSolidBrush.Call(uintptr(rgb(overlayR, overlayG, overlayB)))
 			if brush != 0 {
-				procFillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), brush)
+				procFillRect.Call(hdc, uintptr(unsafe.Pointer(&ps.rcPaint)), brush)
 				procDeleteObject.Call(brush)
 			}
 		}
@@ -353,9 +354,15 @@ func (o *OverlayRenderer) applyRoundedRegion(w, h int32) {
 		uintptr(overlayCornerRadius),
 		uintptr(overlayCornerRadius),
 	)
-	if rgn != 0 {
-		procSetWindowRgn.Call(uintptr(o.hwnd), rgn, 1)
+	if rgn == 0 {
+		return
 	}
+	ret, _, _ := procSetWindowRgn.Call(uintptr(o.hwnd), rgn, 1)
+	if ret == 0 {
+		// SetWindowRgn failed — ownership was NOT transferred, so free the region.
+		procDeleteObject.Call(rgn)
+	}
+	// On success the system owns the region; do not free it.
 }
 
 func rectEquals(a, b w32.RECT) bool {

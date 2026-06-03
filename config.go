@@ -57,12 +57,6 @@ type AppConfig struct {
 	ZoneBottomRight string `json:"zoneBottomRight"`
 }
 
-// ShortcutBinding stores a Win32 RegisterHotKey modifier+vk pair.
-type ShortcutBinding struct {
-	Mod int `json:"mod"`
-	VK  int `json:"vk"`
-}
-
 type ConfigStore struct {
 	path string
 }
