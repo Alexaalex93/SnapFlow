@@ -1,0 +1,134 @@
+name: Release
+
+# Runs on every push to main → updates a rolling "latest" pre-release.
+# Runs on version tags (v*) → creates a proper versioned release.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # ── Determine version string ───────────────────────────────────────────
+      - name: Set version
+        id: ver
+        shell: pwsh
+        run: |
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $v = '${{ github.ref_name }}' -replace '^v',''
+          } else {
+            $sha = '${{ github.sha }}'.Substring(0,7)
+            $v   = "0.0.0-dev.$sha"
+          }
+          Write-Host "VERSION=$v"
+          echo "VERSION=$v" >> $env:GITHUB_OUTPUT
+
+      # ── Generate icon ──────────────────────────────────────────────────────
+      - name: Generate icon
+        shell: pwsh
+        run: .\scripts\make-icon.ps1
+
+      # ── Embed icon + version info ──────────────────────────────────────────
+      - name: Install goversioninfo
+        run: go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+
+      - name: Patch versioninfo.json
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.ver.outputs.VERSION }}'
+          $vi  = Get-Content versioninfo.json -Raw | ConvertFrom-Json
+          $p   = ($ver -split '-')[0] -split '\.'
+          foreach ($f in @('FileVersion','ProductVersion')) {
+            $vi.FixedFileInfo.$f.Major = [int]($p[0] ?? 1)
+            $vi.FixedFileInfo.$f.Minor = [int]($p[1] ?? 0)
+            $vi.FixedFileInfo.$f.Patch = [int]($p[2] ?? 0)
+          }
+          $vi.StringFileInfo.FileVersion    = "$ver"
+          $vi.StringFileInfo.ProductVersion = "$ver"
+          $vi | ConvertTo-Json -Depth 10 | Set-Content versioninfo.json -Encoding utf8
+
+      - name: go generate (resource.syso)
+        run: go generate
+
+      # ── Build exe ──────────────────────────────────────────────────────────
+      - name: Build
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.ver.outputs.VERSION }}'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          go build -ldflags "-H=windowsgui -s -w -X main.appVersion=$ver" -o dist\snapflow.exe .
+          Write-Host "Built: $([int]((Get-Item dist\snapflow.exe).Length/1KB)) KB"
+
+      # ── Create installer with Inno Setup ───────────────────────────────────
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $ver  = '${{ steps.ver.outputs.VERSION }}'
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          Copy-Item dist\snapflow.exe snapflow.exe -Force
+          & $iscc scripts\installer.iss "/DAppVersion=$ver"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          Remove-Item snapflow.exe -Force
+          # Rename to include version
+          $src = Get-ChildItem dist\SnapFlow-Setup.exe | Select-Object -First 1
+          if ($src) { Rename-Item $src.FullName "SnapFlow-$ver-Setup.exe" }
+          Get-ChildItem dist\
+
+      # ── Publish GitHub Release ─────────────────────────────────────────────
+      - name: Publish release (versioned tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: SnapFlow ${{ github.ref_name }}
+          body: |
+            ## Install
+
+            Download **SnapFlow-${{ steps.ver.outputs.VERSION }}-Setup.exe** and run it.
+
+            The installer will:
+            - Install SnapFlow to `%LOCALAPPDATA%\SnapFlow`
+            - Optionally create a desktop shortcut
+            - Optionally start SnapFlow at login
+            - Register an uninstaller in Add/Remove Programs
+
+            **Requires [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)** (pre-installed on Windows 11; auto-updated on Windows 10 via Windows Update).
+          files: |
+            dist/SnapFlow-*-Setup.exe
+            dist/snapflow.exe
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+      - name: Publish rolling "latest" release (main branch)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest build (main)"
+          body: |
+            Automatically built from the latest commit on `main`.
+
+            > **This is a development build** — for stable releases see the [Releases page](../../releases).
+
+            **Files:**
+            - `SnapFlow-*-Setup.exe` — installer (recommended)
+            - `snapflow.exe` — portable executable (no install needed)
+          files: |
+            dist/SnapFlow-*-Setup.exe
+            dist/snapflow.exe
+          prerelease: true

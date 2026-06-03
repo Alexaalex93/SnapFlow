@@ -1,17 +1,3 @@
-﻿// Copyright 2022 Ahmet Alp Balkan
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package w32ex
 
 import (
@@ -27,7 +13,10 @@ const (
 	GA_ROOTOWNER = 3
 )
 
-var user32 = syscall.NewLazyDLL("user32.dll")
+var (
+	user32   = syscall.NewLazyDLL("user32.dll")
+	kernel32 = syscall.NewLazyDLL("kernel32.dll")
+)
 
 func RegisterHotKey(hwnd w32.HWND, id, mod, vk int) bool {
 	r1, _, _ := user32.NewProc("RegisterHotKey").Call(uintptr(hwnd), uintptr(id), uintptr(mod), uintptr(vk))
@@ -37,6 +26,47 @@ func RegisterHotKey(hwnd w32.HWND, id, mod, vk int) bool {
 func GetDpiForWindow(hwnd w32.HWND) int32 {
 	r1, _, _ := user32.NewProc("GetDpiForWindow").Call(uintptr(hwnd))
 	return int32(r1)
+}
+
+func GetAncestor(hwnd w32.HWND, gaFlags uint) w32.HWND {
+	r1, _, _ := user32.NewProc("GetAncestor").Call(uintptr(hwnd), uintptr(gaFlags))
+	return w32.HWND(r1)
+}
+
+func GetShellWindow() w32.HWND {
+	r1, _, _ := user32.NewProc("GetShellWindow").Call()
+	return w32.HWND(r1)
+}
+
+func SetProcessDPIAware() bool {
+	r1, _, _ := user32.NewProc("SetProcessDPIAware").Call()
+	return r1 != 0
+}
+
+func SetProcessDPIAwareBestEffort() bool {
+	const dpiAwarenessContextPerMonitorAwareV2 = ^uintptr(3)
+	if p := user32.NewProc("SetProcessDpiAwarenessContext"); p != nil {
+		r1, _, _ := p.Call(dpiAwarenessContextPerMonitorAwareV2)
+		if r1 != 0 {
+			return true
+		}
+	}
+	return SetProcessDPIAware()
+}
+
+func AnimateWindow(hwnd w32.HWND, dwTime uint32, dwFlags uint32) bool {
+	r1, _, _ := user32.NewProc("AnimateWindow").Call(uintptr(hwnd), uintptr(dwTime), uintptr(dwFlags))
+	return r1 != 0
+}
+
+func GetCurrentThreadID() uint32 {
+	r, _, _ := kernel32.NewProc("GetCurrentThreadId").Call()
+	return uint32(r)
+}
+
+func PostThreadMessage(threadID uint32, msg uint32, wParam, lParam uintptr) bool {
+	r, _, _ := user32.NewProc("PostThreadMessageW").Call(uintptr(threadID), uintptr(msg), wParam, lParam)
+	return r != 0
 }
 
 func GetWindowModuleFileName(hwnd w32.HWND) string {
@@ -50,30 +80,4 @@ func GetWindowModuleFileName(hwnd w32.HWND) string {
 		return ""
 	}
 	return syscall.UTF16ToString(path[:])
-}
-
-func GetAncestor(hwnd w32.HWND, gaFlags uint) w32.HWND {
-	r1, _, _ := user32.NewProc("GetAncestor").Call(uintptr(hwnd), uintptr(gaFlags))
-	return w32.HWND(r1)
-}
-
-func GetShellWindow() (hwnd w32.HWND) {
-	r1, _, _ := user32.NewProc("GetShellWindow").Call()
-	return w32.HWND(r1)
-}
-
-func SetProcessDPIAware() bool {
-	r1, _, _ := user32.NewProc("SetProcessDPIAware").Call()
-	return r1 != 0
-}
-
-func SetProcessDPIAwareBestEffort() bool {
-	const dpiAwarenessContextPerMonitorAwareV2 = ^uintptr(3) // (DPI_AWARENESS_CONTEXT)-4
-	if p := user32.NewProc("SetProcessDpiAwarenessContext"); p != nil {
-		r1, _, _ := p.Call(dpiAwarenessContextPerMonitorAwareV2)
-		if r1 != 0 {
-			return true
-		}
-	}
-	return SetProcessDPIAware()
 }

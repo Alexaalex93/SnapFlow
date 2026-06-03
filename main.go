@@ -1,324 +1,240 @@
-﻿// Copyright 2022 Ahmet Alp Balkan
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-// TODO make it possible to "go generate" on Windows (https://github.com/josephspurrier/goversioninfo/issues/52).
-//go:generate /bin/bash -c "go run github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest -arm -64 -icon=assets/icon.ico - <<< '{}'"
-
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
-	"reflect"
 	"runtime"
+	"syscall"
+	"unsafe"
 
-	"github.com/getlantern/systray"
+	"snapflow/w32ex"
+
 	"github.com/gonutz/w32/v2"
+)
 
-	"github.com/ahmetb/RectangleWin/w32ex"
+const (
+	appName    = "SnapFlow"
+	appVersion = "1.0.0"
+
+	wmOpenSettings = w32.WM_APP + 1
+	wmDoQuit       = w32.WM_APP + 2
+	wmOpenConfig   = w32.WM_APP + 3
 )
 
 var (
-	lastResized    w32.HWND
-	appConfigStore *ConfigStore
-	appConfig      *AppConfig
-	licenseManager *LicenseManager
-	entitlements   *Entitlements
-	snapEngine     *SnapEngine
-	dragManager    *DragManager
+	appCfg       *AppConfig
+	appCfgStore  *ConfigStore
+	dragMgr      *DragManager
+	overlay      *OverlayRenderer
+	mainThreadID uint32
 )
 
 func main() {
-	runtime.LockOSThread() // since we bind hotkeys etc that need to dispatch their message here
+	runtime.LockOSThread()
+	mainThreadID = w32ex.GetCurrentThreadID()
+
+	// Single-instance guard: exit if already running.
+	kernel32 := syscall.NewLazyDLL("kernel32.dll")
+	mutexName, _ := syscall.UTF16PtrFromString("SnapFlow_SingleInstance_Mutex")
+	kernel32.NewProc("CreateMutexW").Call(0, 0, uintptr(unsafe.Pointer(mutexName)))
+	if syscall.GetLastError() == syscall.Errno(183) { // ERROR_ALREADY_EXISTS
+		w32.MessageBox(0, "SnapFlow is already running.\nCheck the system tray.", appName, w32.MB_ICONINFORMATION|w32.MB_OK)
+		os.Exit(0)
+	}
+
 	if !w32ex.SetProcessDPIAwareBestEffort() {
-		panic("failed to set DPI aware")
+		fmt.Fprintln(os.Stderr, "warn: DPI awareness failed")
 	}
-	if err := initAppRuntime(); err != nil {
-		panic(err)
-	}
-
-	autorun, err := AutoRunEnabled()
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("autorun enabled=%v\n", autorun)
-	fmt.Printf("pro unlocked=%v\n", entitlements.IsPro())
-	printMonitors()
-
-	edgeFuncs, cornerFuncs := keyboardResizeFunctions()
-	edgeFuncTurn := make([]int, len(edgeFuncs))
-	cornerFuncTurn := make([]int, len(cornerFuncs))
-
-	cycleFuncs := func(funcs [][]resizeFunc, turns *[]int, i int) {
-		hwnd := w32.GetForegroundWindow()
-		if hwnd == 0 {
-			panic("foreground window is NULL")
-		}
-		if lastResized != hwnd {
-			*turns = make([]int, len(funcs)) // reset
-		}
-		if _, err := resize(hwnd, funcs[i][(*turns)[i]%len(funcs[i])]); err != nil {
-			fmt.Printf("warn: resize: %v\n", err)
-			return
-		}
-		(*turns)[i]++
-		for j := 0; j < len(*turns); j++ {
-			if j != i {
-				(*turns)[j] = 0
-			}
-		}
+	if err := startup(); err != nil {
+		fmt.Fprintf(os.Stderr, "startup: %v\n", err)
+		os.Exit(1)
 	}
 
-	cycleEdgeFuncs := func(i int) { cycleFuncs(edgeFuncs, &edgeFuncTurn, i) }
-	cycleCornerFuncs := func(i int) { cycleFuncs(cornerFuncs, &cornerFuncTurn, i) }
+	registerAllHotKeys()
 
-	hks := []HotKey{
-		(HotKey{id: 1, mod: MOD_ALT | MOD_WIN | MOD_NOREPEAT, vk: w32.VK_LEFT, callback: func() { cycleEdgeFuncs(0) }}),
-		(HotKey{id: 2, mod: MOD_ALT | MOD_WIN | MOD_NOREPEAT, vk: w32.VK_RIGHT, callback: func() { cycleEdgeFuncs(1) }}),
-		(HotKey{id: 3, mod: MOD_ALT | MOD_WIN | MOD_NOREPEAT, vk: w32.VK_UP, callback: func() { cycleEdgeFuncs(2) }}),
-		(HotKey{id: 4, mod: MOD_ALT | MOD_WIN | MOD_NOREPEAT, vk: w32.VK_DOWN, callback: func() { cycleEdgeFuncs(3) }}),
-		(HotKey{id: 5, mod: MOD_CONTROL | MOD_ALT | MOD_WIN | MOD_NOREPEAT, vk: w32.VK_LEFT, callback: func() { cycleCornerFuncs(0) }}),
-		(HotKey{id: 6, mod: MOD_CONTROL | MOD_ALT | MOD_WIN | MOD_NOREPEAT, vk: w32.VK_UP, callback: func() { cycleCornerFuncs(1) }}),
-		(HotKey{id: 7, mod: MOD_CONTROL | MOD_ALT | MOD_WIN | MOD_NOREPEAT, vk: w32.VK_DOWN, callback: func() { cycleCornerFuncs(2) }}),
-		(HotKey{id: 8, mod: MOD_CONTROL | MOD_ALT | MOD_WIN | MOD_NOREPEAT, vk: w32.VK_RIGHT, callback: func() { cycleCornerFuncs(3) }}),
-		(HotKey{id: 50, mod: MOD_SHIFT | MOD_WIN, vk: 0x46 /*F*/, callback: func() {
-			lastResized = 0 // cause edgeFuncTurn to be reset
-			if err := maximize(); err != nil {
-				fmt.Printf("warn: maximize: %v\n", err)
-				return
-			}
-		}}),
-		(HotKey{id: 60, mod: MOD_ALT | MOD_WIN, vk: 0x43 /*C*/, callback: func() {
-			lastResized = 0 // cause edgeFuncTurn to be reset
-			if _, err := resize(w32.GetForegroundWindow(), center); err != nil {
-				fmt.Printf("warn: resize: %v\n", err)
-				return
-			}
-		}}),
-		(HotKey{id: 70, mod: MOD_ALT | MOD_WIN, vk: 0x41 /*A*/, callback: func() {
-			hwnd := w32.GetForegroundWindow()
-			if err := toggleAlwaysOnTop(hwnd); err != nil {
-				fmt.Printf("warn: toggleAlwaysOnTop: %v\n", err)
-				return
-			}
-			fmt.Printf("> toggled always on top: %v\n", hwnd)
-		}}),
+	// initTray runs on the main thread so the tray window's messages
+	// are delivered by our msgLoop (same OS thread = same message queue).
+	if err := initTray(); err != nil {
+		fmt.Fprintf(os.Stderr, "warn: tray: %v\n", err)
 	}
 
-	var failedHotKeys []HotKey
-	for _, hk := range hks {
-		if !RegisterHotKey(hk) {
-			failedHotKeys = append(failedHotKeys, hk)
-		}
-	}
-	if len(failedHotKeys) > 0 {
-		msg := "The following hotkey(s) are in use by another process:\n\n"
-		for _, hk := range failedHotKeys {
-			msg += "  - " + hk.Describe() + "\n"
-		}
-		msg += "\nTo use these hotkeys in " + ProductName + ", close the other process using the key combination(s)."
-		showMessageBox(msg)
-	}
-
-	exitCh := make(chan os.Signal)
-	signal.Notify(exitCh, os.Interrupt)
 	go func() {
-		<-exitCh
-		fmt.Println("exit signal received")
-		systray.Quit() // causes WM_CLOSE, WM_QUIT, not sure if a side-effect
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt)
+		<-c
+		removeTrayIcon()
+		postToMain(wmDoQuit, 0, 0)
 	}()
 
-	// TODO systray/systray.go already locks the OS thread in init()
-	// however it's not clear if GetMessage(0,0) will continue to work
-	// as we run "go initTray()" and not pin the thread that initializes the
-	// tray.
-	initTray()
 	if err := msgLoop(); err != nil {
-		panic(err)
+		fmt.Fprintf(os.Stderr, "message loop: %v\n", err)
+		os.Exit(1)
 	}
 }
 
-func initAppRuntime() error {
+func startup() error {
 	var err error
-	appConfigStore, err = NewConfigStore()
+	appCfgStore, err = NewConfigStore()
 	if err != nil {
-		return err
+		return fmt.Errorf("config store: %w", err)
 	}
-	appConfig, err = appConfigStore.Load()
+	appCfg, err = appCfgStore.Load()
 	if err != nil {
-		return err
+		return fmt.Errorf("load config: %w", err)
 	}
-	if err := appConfigStore.Save(appConfig); err != nil {
-		return err
-	}
-	licenseManager = NewLicenseManager(appConfig)
-	entitlements = NewEntitlements(licenseManager.ProUnlocked())
-	snapEngine = NewSnapEngine(entitlements)
-	overlay, err := NewOverlayRenderer()
+	_ = appCfgStore.Save(appCfg)
+
+	overlay, err = NewOverlayRenderer()
 	if err != nil {
-		return err
+		return fmt.Errorf("overlay: %w", err)
 	}
-	dragManager = NewDragManager(snapEngine, NewGestureInterpreter(entitlements), overlay)
-	if err := dragManager.Start(); err != nil {
-		return err
-	}
-	return nil
+
+	gest := NewGestureInterpreter(appCfg)
+	dragMgr = NewDragManager(gest, overlay)
+	return dragMgr.Start()
 }
 
-func keyboardResizeFunctions() ([][]resizeFunc, [][]resizeFunc) {
-	edgeFuncs := [][]resizeFunc{
-		{leftHalf},
-		{rightHalf},
-		{topHalf},
-		{bottomHalf},
-	}
-	cornerFuncs := [][]resizeFunc{
-		{topLeftHalf},
-		{topRightHalf},
-		{bottomLeftHalf},
-		{bottomRightHalf},
-	}
-	if entitlements.Enabled(FeatureThirdsAndTwoThirds) {
-		edgeFuncs[0] = append(edgeFuncs[0], leftTwoThirds, leftOneThirds)
-		edgeFuncs[1] = append(edgeFuncs[1], rightTwoThirds, rightOneThirds)
-		edgeFuncs[2] = append(edgeFuncs[2], topTwoThirds, topOneThirds)
-		edgeFuncs[3] = append(edgeFuncs[3], bottomTwoThirds, bottomOneThirds)
+// registerAllHotKeys registers Rectangle's default shortcuts translated to Windows.
+//
+// Mapping:  macOS Ctrl+Option → Windows Ctrl+Alt
+//           macOS Ctrl+Option+Cmd → Windows Ctrl+Alt+Win
+//
+// NOTE: Ctrl+Alt+Arrow is often grabbed by Intel/AMD/NVIDIA display-rotation
+// shortcuts. If registration fails the user is told which shortcuts conflicted
+// and the rest still work. The graphics-driver conflict can be fixed in the
+// GPU control panel ("Disable hotkeys" or "Rotate display" shortcut).
+func registerAllHotKeys() {
+	// Primary modifier set: Ctrl+Alt (= macOS Ctrl+Option)
+	ca  := MOD_CONTROL | MOD_ALT | MOD_NOREPEAT
+	cas := MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT
+	caw := MOD_CONTROL | MOD_ALT | MOD_WIN | MOD_NOREPEAT
 
-		cornerFuncs[0] = append(cornerFuncs[0], topLeftTwoThirds, topLeftOneThirds)
-		cornerFuncs[1] = append(cornerFuncs[1], topRightTwoThirds, topRightOneThirds)
-		cornerFuncs[2] = append(cornerFuncs[2], bottomLeftTwoThirds, bottomLeftOneThirds)
-		cornerFuncs[3] = append(cornerFuncs[3], bottomRightTwoThirds, bottomRightOneThirds)
+	const (
+		vkLeft   = 0x25; vkRight = 0x27
+		vkUp     = 0x26; vkDown  = 0x28
+		vkReturn = 0x0D
+		// macOS "Delete" key = Backspace on Windows (0x08).
+		// Ctrl+Alt+Delete is system-reserved by Windows and can never be registered.
+		vkBack  = 0x08
+		vkEqual = 0xBB; vkMinus = 0xBD // = and -
+
+		vkC = 0x43; vkD = 0x44; vkE = 0x45; vkF = 0x46
+		vkG = 0x47; vkI = 0x49; vkJ = 0x4A; vkK = 0x4B
+		vkR = 0x52; vkT = 0x54; vkU = 0x55
+	)
+
+	hks := []HotKey{
+		// ── Halves ───────────────────────────────────────────────────────────
+		// Ctrl+Alt+Arrow is commonly taken by GPU rotation shortcuts.
+		// If they fail the user sees which ones and can fix in GPU settings.
+		{id: 1, mod: ca, vk: vkLeft,  label: "Left Half",   action: ActionLeftHalf},
+		{id: 2, mod: ca, vk: vkRight, label: "Right Half",  action: ActionRightHalf},
+		{id: 3, mod: ca, vk: vkUp,    label: "Top Half",    action: ActionTopHalf},
+		{id: 4, mod: ca, vk: vkDown,  label: "Bottom Half", action: ActionBottomHalf},
+
+		// ── Quarters ─────────────────────────────────────────────────────────
+		{id: 10, mod: ca, vk: vkU, label: "Top Left",     action: ActionTopLeft},
+		{id: 11, mod: ca, vk: vkI, label: "Top Right",    action: ActionTopRight},
+		{id: 12, mod: ca, vk: vkJ, label: "Bottom Left",  action: ActionBottomLeft},
+		{id: 13, mod: ca, vk: vkK, label: "Bottom Right", action: ActionBottomRight},
+
+		// ── Thirds ───────────────────────────────────────────────────────────
+		{id: 20, mod: ca, vk: vkD, label: "First Third",       action: ActionFirstThird},
+		{id: 21, mod: ca, vk: vkE, label: "First Two Thirds",  action: ActionFirstTwoThirds},
+		{id: 22, mod: ca, vk: vkF, label: "Center Third",      action: ActionCenterThird},
+		{id: 23, mod: ca, vk: vkT, label: "Last Two Thirds",   action: ActionLastTwoThirds},
+		{id: 24, mod: ca, vk: vkG, label: "Last Third",        action: ActionLastThird},
+		{id: 25, mod: ca, vk: vkR, label: "Center Two Thirds", action: ActionCenterTwoThirds},
+
+		// ── Maximize ─────────────────────────────────────────────────────────
+		{id: 30, mod: ca,  vk: vkReturn, label: "Maximize",        action: ActionMaximize},
+		{id: 31, mod: cas, vk: vkReturn, label: "Almost Maximize",  action: ActionAlmostMaximize},
+		{id: 32, mod: cas, vk: vkUp,     label: "Maximize Height",  action: ActionMaximizeHeight},
+
+		// ── Center / Resize / Restore ─────────────────────────────────────────
+		{id: 40, mod: ca, vk: vkC,      label: "Center",   action: ActionCenter},
+		{id: 50, mod: ca, vk: vkEqual,  label: "Larger",   action: ActionLarger},
+		{id: 51, mod: ca, vk: vkMinus,  label: "Smaller",  action: ActionSmaller},
+		{id: 60, mod: ca, vk: vkBack, label: "Restore (Ctrl+Alt+Backspace)", action: ActionRestore},
+
+		// ── Multi-monitor ────────────────────────────────────────────────────
+		{id: 70, mod: caw, vk: vkRight, label: "Next Display",     action: ActionNextDisplay},
+		{id: 71, mod: caw, vk: vkLeft,  label: "Previous Display", action: ActionPreviousDisplay},
 	}
-	return edgeFuncs, cornerFuncs
+
+	var failed []HotKey
+	for _, hk := range hks {
+		hk.callback = makeActionCallback(hk.action)
+		if !RegisterHotKey(hk) {
+			failed = append(failed, hk)
+		}
+	}
+	if len(failed) > 0 {
+		showShortcutConflictDialog(failed)
+	}
 }
 
-func showMessageBox(text string) {
-	w32.MessageBox(w32.GetActiveWindow(), text, ProductName, w32.MB_ICONWARNING|w32.MB_OK)
-}
-
-type resizeFunc func(disp, cur w32.RECT) w32.RECT
-
-func center(disp, cur w32.RECT) w32.RECT {
-	// TODO find a way to round up divisions consistently as it causes multiple runs to shift by 1px
-	w := (disp.Width() - cur.Width()) / 2
-	h := (disp.Height() - cur.Height()) / 2
-	return w32.RECT{
-		Left:   disp.Left + w,
-		Right:  disp.Left + w + cur.Width(),
-		Top:    disp.Top + h,
-		Bottom: disp.Top + h + cur.Height()}
-}
-
-func resize(hwnd w32.HWND, f resizeFunc) (bool, error) {
-	if !isZonableWindow(hwnd) {
-		fmt.Printf("warn: non-zonable window: %s\n", w32.GetWindowText(hwnd))
-		return false, nil
+// makeActionCallback returns the callback function for a WindowAction hotkey.
+func makeActionCallback(action WindowAction) func() {
+	return func() {
+		hwnd := w32.GetForegroundWindow()
+		if !isZonableWindow(hwnd) {
+			return
+		}
+		executeAction(hwnd, action)
 	}
-	rect := w32.GetWindowRect(hwnd)
+}
+
+// executeAction applies a WindowAction to the given window.
+// This is the central dispatch — translates Rectangle's WindowManager.execute().
+func executeAction(hwnd w32.HWND, action WindowAction) {
+	switch action {
+	case ActionMaximize:
+		maximize(hwnd)
+		return
+
+	case ActionRestore:
+		if prev, ok := windowHistory.Pop(hwnd); ok {
+			resizeToRect(hwnd, prev)
+		}
+		return
+
+	case ActionNextDisplay:
+		moveToDisplay(hwnd, true)
+		return
+	case ActionPreviousDisplay:
+		moveToDisplay(hwnd, false)
+		return
+
+	case ActionDisplayOne, ActionDisplayTwo, ActionDisplayThree,
+		ActionDisplayFour, ActionDisplayFive, ActionDisplaySix,
+		ActionDisplaySeven, ActionDisplayEight, ActionDisplayNine:
+		idx := int(action - ActionDisplayOne)
+		moveToDisplayByIndex(hwnd, idx)
+		return
+	}
+
 	mon := w32.MonitorFromWindow(hwnd, w32.MONITOR_DEFAULTTONEAREST)
-	hdc := w32.GetDC(hwnd)
-	displayDPI := w32.GetDeviceCaps(hdc, w32.LOGPIXELSY)
-	if !w32.ReleaseDC(hwnd, hdc) {
-		return false, fmt.Errorf("failed to ReleaseDC:%d", w32.GetLastError())
-	}
 	var monInfo w32.MONITORINFO
 	if !w32.GetMonitorInfo(mon, &monInfo) {
-		return false, fmt.Errorf("failed to GetMonitorInfo:%d", w32.GetLastError())
+		return
+	}
+	work := monInfo.RcWork
+	cur := w32.GetWindowRect(hwnd)
+	if cur == nil {
+		return
 	}
 
-	ok, frame := w32.DwmGetWindowAttributeEXTENDED_FRAME_BOUNDS(hwnd)
-	if !ok {
-		return false, fmt.Errorf("failed to DwmGetWindowAttributeEXTENDED_FRAME_BOUNDS:%d", w32.GetLastError())
-	}
-	windowDPI := w32ex.GetDpiForWindow(hwnd)
-	resizedFrame := resizeForDpi(frame, int32(windowDPI), int32(displayDPI))
+	// Save to history before modifying.
+	windowHistory.Save(hwnd, *cur)
 
-	fmt.Printf("> window: 0x%x %#v (w:%d,h:%d) mon=0x%X(@ display DPI:%d)\n", hwnd, rect, rect.Width(), rect.Height(), mon, displayDPI)
-	fmt.Printf("> DWM frame:        %#v (W:%d,H:%d) @ window DPI=%v\n", frame, frame.Width(), frame.Height(), windowDPI)
-	fmt.Printf("> DPI-less frame:   %#v (W:%d,H:%d)\n", resizedFrame, resizedFrame.Width(), resizedFrame.Height())
-
-	// calculate how many extra pixels go to win10 invisible borders
-	lExtra := resizedFrame.Left - rect.Left
-	rExtra := -resizedFrame.Right + rect.Right
-	tExtra := resizedFrame.Top - rect.Top
-	bExtra := -resizedFrame.Bottom + rect.Bottom
-
-	newPos := f(monInfo.RcWork, resizedFrame)
-
-	// adjust offsets based on invisible borders
-	newPos.Left -= lExtra
-	newPos.Top -= tExtra
-	newPos.Right += rExtra
-	newPos.Bottom += bExtra
-
-	lastResized = hwnd
-	if sameRect(rect, &newPos) {
-		fmt.Println("no resize")
-		return false, nil
-	}
-
-	fmt.Printf("> resizing to: %#v (W:%d,H:%d)\n", newPos, newPos.Width(), newPos.Height())
-	if !w32.ShowWindow(hwnd, w32.SW_SHOWNORMAL) { // normalize window first if it's set to SW_SHOWMAXIMIZE (and therefore stays maximized)
-		return false, fmt.Errorf("failed to normalize window ShowWindow:%d", w32.GetLastError())
-	}
-	if !w32.SetWindowPos(hwnd, 0, int(newPos.Left), int(newPos.Top), int(newPos.Width()), int(newPos.Height()), w32.SWP_NOZORDER|w32.SWP_NOACTIVATE) {
-		return false, fmt.Errorf("failed to SetWindowPos:%d", w32.GetLastError())
-	}
-	rect = w32.GetWindowRect(hwnd)
-	fmt.Printf("> post-resize: %#v(W:%d,H:%d)\n", rect, rect.Width(), rect.Height())
-	return true, nil
-}
-
-func maximize() error {
-	hwnd := w32.GetForegroundWindow()
-	if !isZonableWindow(hwnd) {
-		return errors.New("foreground window is not zonable")
-	}
-	if !w32.ShowWindow(hwnd, w32.SW_MAXIMIZE) {
-		return fmt.Errorf("failed to ShowWindow:%d", w32.GetLastError())
-	}
-	return nil
-}
-
-func toggleAlwaysOnTop(hwnd w32.HWND) error {
-	if !isZonableWindow(hwnd) {
-		return errors.New("foreground window is not zonable")
-	}
-
-	if w32.GetWindowLong(hwnd, w32.GWL_EXSTYLE)&w32.WS_EX_TOPMOST != 0 {
-		if !w32.SetWindowPos(hwnd, w32.HWND_NOTOPMOST, 0, 0, 0, 0, w32.SWP_NOMOVE|w32.SWP_NOSIZE) {
-			return fmt.Errorf("failed to SetWindowPos(HWND_NOTOPMOST): %v", w32.GetLastError())
-		}
-	} else {
-		if !w32.SetWindowPos(hwnd, w32.HWND_TOPMOST, 0, 0, 0, 0, w32.SWP_NOMOVE|w32.SWP_NOSIZE) {
-			return fmt.Errorf("failed to SetWindowPos(HWND_TOPMOST) :%v", w32.GetLastError())
-		}
-	}
-	return nil
-}
-
-func resizeForDpi(src w32.RECT, from, to int32) w32.RECT {
-	return w32.RECT{
-		Left:   src.Left * to / from,
-		Right:  src.Right * to / from,
-		Top:    src.Top * to / from,
-		Bottom: src.Bottom * to / from,
+	target := action.Calculate(work, *cur, appCfg)
+	if _, err := resizeToRect(hwnd, target); err != nil {
+		fmt.Printf("warn: action %d: %v\n", action, err)
 	}
 }
 
-func sameRect(a, b *w32.RECT) bool {
-	return a != nil && b != nil && reflect.DeepEqual(*a, *b)
+func postToMain(msg uint32, wParam, lParam uintptr) {
+	w32ex.PostThreadMessage(mainThreadID, msg, wParam, lParam)
 }

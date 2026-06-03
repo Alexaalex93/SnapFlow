@@ -1,44 +1,46 @@
-﻿package main
+package main
 
 import (
 	"fmt"
 	"sync"
+	"time"
 
-	"github.com/ahmetb/RectangleWin/w32ex"
+	"snapflow/w32ex"
+
 	"github.com/gonutz/w32/v2"
 )
 
+// DragManager detects window drags via WinEvent hooks and applies snap actions.
+// Translates Rectangle's SnappingManager.
 type DragManager struct {
 	overlay *OverlayRenderer
-	engine  *SnapEngine
 	gest    *GestureInterpreter
 
-	mu       sync.Mutex
-	hooks    []w32ex.WinEventHook
-	active   bool
-	hwnd     w32.HWND
-	workArea w32.RECT
+	mu            sync.Mutex
+	hooks         []w32ex.WinEventHook
+	active        bool
+	hwnd          w32.HWND
+	workArea      w32.RECT
+	preSnap       w32.RECT // window rect before snap, for history
+	lastPreviewAt time.Time
 }
 
-func NewDragManager(engine *SnapEngine, gest *GestureInterpreter, overlay *OverlayRenderer) *DragManager {
-	return &DragManager{engine: engine, gest: gest, overlay: overlay}
+func NewDragManager(gest *GestureInterpreter, overlay *OverlayRenderer) *DragManager {
+	return &DragManager{gest: gest, overlay: overlay}
 }
 
 func (d *DragManager) Start() error {
-	if d == nil {
-		return nil
-	}
 	cb := func(_ w32ex.WinEventHook, event uint32, hwnd w32.HWND, idObject int32, _ int32, _ uint32, _ uint32) {
 		if idObject != int32(w32ex.OBJID_WINDOW) {
 			return
 		}
 		switch event {
 		case w32ex.EVENT_SYSTEM_MOVESIZESTART:
-			d.onMoveSizeStart(hwnd)
+			d.onMoveStart(hwnd)
 		case w32ex.EVENT_OBJECT_LOCATIONCHANGE:
 			d.onLocationChange(hwnd)
 		case w32ex.EVENT_SYSTEM_MOVESIZEEND:
-			d.onMoveSizeEnd(hwnd)
+			d.onMoveEnd(hwnd)
 		}
 	}
 
@@ -49,16 +51,13 @@ func (d *DragManager) Start() error {
 	)
 	for _, h := range d.hooks {
 		if h == 0 {
-			return fmt.Errorf("failed to install one or more WinEvent hooks")
+			return fmt.Errorf("failed to install WinEvent hook")
 		}
 	}
 	return nil
 }
 
 func (d *DragManager) Stop() {
-	if d == nil {
-		return
-	}
 	for _, h := range d.hooks {
 		if h != 0 {
 			w32ex.UnhookWinEvent(h)
@@ -69,10 +68,10 @@ func (d *DragManager) Stop() {
 	d.active = false
 	d.hwnd = 0
 	d.mu.Unlock()
-	_ = d.overlay.Hide()
+	d.overlay.Hide()
 }
 
-func (d *DragManager) onMoveSizeStart(hwnd w32.HWND) {
+func (d *DragManager) onMoveStart(hwnd w32.HWND) {
 	if !isZonableWindow(hwnd) {
 		return
 	}
@@ -80,17 +79,21 @@ func (d *DragManager) onMoveSizeStart(hwnd w32.HWND) {
 	if !ok {
 		return
 	}
-	work, ok := monitorWorkAreaAtPoint(pt)
+	work, ok := monitorWorkArea(pt)
 	if !ok {
 		return
 	}
+	rect := w32.GetWindowRect(hwnd)
 	d.mu.Lock()
 	d.active = true
 	d.hwnd = hwnd
 	d.workArea = work
+	if rect != nil {
+		d.preSnap = *rect
+	}
 	d.mu.Unlock()
-	d.gest.Begin(hwnd, pt)
-	_ = d.overlay.Hide()
+	d.gest.Begin(hwnd, work)
+	d.overlay.Hide()
 }
 
 func (d *DragManager) onLocationChange(hwnd w32.HWND) {
@@ -105,7 +108,7 @@ func (d *DragManager) onLocationChange(hwnd w32.HWND) {
 	if !ok {
 		return
 	}
-	work, ok := monitorWorkAreaAtPoint(pt)
+	work, ok := monitorWorkArea(pt)
 	if !ok {
 		return
 	}
@@ -113,37 +116,69 @@ func (d *DragManager) onLocationChange(hwnd w32.HWND) {
 	d.workArea = work
 	d.mu.Unlock()
 
-	target := d.gest.Update(work, pt)
-	if target == SnapNone || !d.engine.Allowed(target) {
-		_ = d.overlay.Hide()
+	action := d.gest.Update(pt, work)
+	if action == ActionNone || !action.IsDragSnappable() {
+		d.mu.Lock()
+		lastAt := d.lastPreviewAt
+		d.mu.Unlock()
+		if time.Since(lastAt) < 80*time.Millisecond {
+			return
+		}
+		d.overlay.Hide()
 		return
 	}
-	_ = d.overlay.Show(d.engine.Bounds(work, target))
+
+	// Show footprint at the target position.
+	target := action.Calculate(work, d.getPreSnap(), appCfg)
+	d.overlay.Show(target)
+	d.mu.Lock()
+	d.lastPreviewAt = time.Now()
+	d.mu.Unlock()
 }
 
-func (d *DragManager) onMoveSizeEnd(hwnd w32.HWND) {
+func (d *DragManager) onMoveEnd(hwnd w32.HWND) {
 	d.mu.Lock()
 	active := d.active && d.hwnd == hwnd
 	d.active = false
 	d.hwnd = 0
+	pre := d.preSnap
+	work := d.workArea
 	d.mu.Unlock()
+
+	d.overlay.Hide()
+	action := d.gest.CurrentAction()
+	d.gest.End()
+
 	if !active {
 		return
 	}
-	defer d.gest.End()
-	defer d.overlay.Hide()
-
-	target := d.gest.CurrentTarget()
-	if target == SnapNone || !d.engine.Allowed(target) {
+	if action == ActionNone || !action.IsDragSnappable() {
 		return
 	}
-	if _, err := d.engine.Apply(hwnd, target); err != nil {
-		fmt.Printf("warn: drag apply failed: %v\n", err)
+
+	// Save current position to history before snapping.
+	if rect := w32.GetWindowRect(hwnd); rect != nil {
+		windowHistory.Save(hwnd, *rect)
+	}
+
+	target := action.Calculate(work, pre, appCfg)
+
+	if action == ActionMaximize {
+		maximize(hwnd)
 		return
+	}
+	if _, err := resizeToRect(hwnd, target); err != nil {
+		fmt.Printf("warn: snap apply: %v\n", err)
 	}
 }
 
-func monitorWorkAreaAtPoint(pt w32.POINT) (w32.RECT, bool) {
+func (d *DragManager) getPreSnap() w32.RECT {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.preSnap
+}
+
+func monitorWorkArea(pt w32.POINT) (w32.RECT, bool) {
 	mon := w32ex.MonitorFromPoint(pt, w32ex.MONITOR_DEFAULTTONEAREST)
 	if mon == 0 {
 		return w32.RECT{}, false
