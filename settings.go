@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gonutz/w32/v2"
 	webview "github.com/jchv/go-webview2"
 )
 
@@ -304,6 +305,27 @@ func runSettingsWindow() {
 		}
 	})
 
+	// goCheckUpdates queries GitHub and returns a result string:
+	//   "uptodate"        — already on latest version
+	//   "new:1.2.3"       — newer version available
+	//   "error: <msg>"    — network or API error
+	w.Bind("goCheckUpdates", func() string {
+		latest, err := fetchLatestVersion()
+		if err != nil {
+			return "error: " + err.Error()
+		}
+		current := strings.TrimPrefix(appVersion, "v")
+		latestClean := strings.TrimPrefix(latest, "v")
+		if isNewerVersion(latestClean, current) {
+			return "new:" + latestClean
+		}
+		return "uptodate"
+	})
+
+	w.Bind("goOpenRepo", func() {
+		w32.ShellExecute(0, "open", releasesURL, "", "", w32.SW_SHOWNORMAL)
+	})
+
 	winSnap, _ := json.Marshal(WindowsSnapEnabled())
 	shortcuts, _ := json.Marshal(buildShortcutEntries())
 	general, _ := json.Marshal(GeneralSettings{
@@ -328,12 +350,14 @@ func runSettingsWindow() {
 		Bottom:           appCfg.ZoneBottom,
 		BottomRight:      appCfg.ZoneBottomRight,
 	})
+	version, _ := json.Marshal(appVersion)
 	w.Init(fmt.Sprintf(`
 		window._shortcuts = %s;
 		window._general   = %s;
 		window._snapAreas = %s;
 		window._winSnap   = %s;
-	`, string(shortcuts), string(general), string(snapAreas), string(winSnap)))
+		window._version   = %s;
+	`, string(shortcuts), string(general), string(snapAreas), string(winSnap), string(version)))
 
 	tmpPath := filepath.Join(os.TempDir(), "snapflow_settings.html")
 	if err := os.WriteFile(tmpPath, []byte(settingsHTML), 0644); err != nil {

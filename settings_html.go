@@ -132,6 +132,14 @@ body{font-family:"Segoe UI",system-ui,sans-serif;font-size:13px;
         </svg>
         <span data-i18n="tabGeneral">General</span>
       </button>
+      <button class="tab-btn" id="btn-about" onclick="showTab('about',this)">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+          <circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          <line x1="11" y1="10" x2="11" y2="15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="11" cy="7.5" r="0.9" fill="currentColor"/>
+        </svg>
+        <span data-i18n="tabAbout">About</span>
+      </button>
     </div>
     <div class="lang-group">
       <button class="lang-btn active" data-lang="en" onclick="setLang('en')">EN</button>
@@ -193,6 +201,57 @@ body{font-family:"Segoe UI",system-ui,sans-serif;font-size:13px;
   <div class="gen-wrap" id="genWrap"></div>
 </div>
 
+<div id="page-about" class="page">
+  <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+              gap:20px;padding:32px;background:#f5f5f5">
+    <!-- Logo + name -->
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
+      <svg width="64" height="64" viewBox="0 0 64 64">
+        <rect width="64" height="64" rx="14" fill="url(#g)"/>
+        <defs>
+          <linearGradient id="g" x1="0" y1="0" x2="0" y2="64" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#0078D4"/>
+            <stop offset="1" stop-color="#004E8C"/>
+          </linearGradient>
+        </defs>
+        <!-- left panel (snapped window) -->
+        <rect x="9" y="9" width="27" height="46" rx="4" fill="white"/>
+        <!-- top-right panel -->
+        <rect x="40" y="9" width="15" height="21" rx="3" fill="white" opacity=".65"/>
+        <!-- bottom-right panel -->
+        <rect x="40" y="34" width="15" height="21" rx="3" fill="white" opacity=".65"/>
+      </svg>
+      <div style="font-size:22px;font-weight:700;color:#1a1a1a">SnapFlow</div>
+      <div style="font-size:13px;color:#666" data-i18n="aboutSub">Window Manager for Windows</div>
+    </div>
+
+    <!-- Version card -->
+    <div style="background:white;border:1px solid #e0e0e0;border-radius:10px;
+                padding:16px 28px;text-align:center;min-width:240px">
+      <div style="font-size:11px;font-weight:700;color:#888;text-transform:uppercase;
+                  letter-spacing:.5px;margin-bottom:6px" data-i18n="aboutInstalled">Installed version</div>
+      <div id="versionBadge" style="font-size:24px;font-weight:700;color:#0078d4;
+                                    font-family:Consolas,monospace">
+        v<span id="versionNum">—</span>
+      </div>
+      <div id="updateStatus" style="margin-top:6px;font-size:12px;color:#888"></div>
+    </div>
+
+    <!-- Check updates button -->
+    <button id="checkUpdBtn" class="btn"
+            style="padding:0 24px;height:32px;font-size:13px;font-weight:500"
+            onclick="runCheckUpdates()">
+      <span data-i18n="aboutCheckBtn">Check for updates</span>
+    </button>
+
+    <!-- GitHub link -->
+    <a href="#" onclick="goOpenRepo(); return false;"
+       style="font-size:12px;color:#0078d4;text-decoration:none">
+      github.com/Alexaalex93/SnapFlow
+    </a>
+  </div>
+</div>
+
 <div class="footer">
   <div class="fl">
     <button class="btn" onclick="resetDefaults()"><span data-i18n="btnReset">Reset defaults</span></button>
@@ -207,7 +266,10 @@ body{font-family:"Segoe UI",system-ui,sans-serif;font-size:13px;
 // ── i18n ──────────────────────────────────────────────────────────────────────
 const LANGS = {
   en:{
-    tabShortcuts:'Shortcuts',tabSnapAreas:'Snap Areas',tabGeneral:'General',
+    tabShortcuts:'Shortcuts',tabSnapAreas:'Snap Areas',tabGeneral:'General',tabAbout:'About',
+    aboutSub:'Window Manager for Windows',aboutInstalled:'Installed version',
+    aboutCheckBtn:'Check for updates',aboutChecking:'Checking…',
+    aboutUpToDate:'You are up to date',aboutNewVer:'New version available',
     winSnapTitle:'Windows Snap (AeroSnap)',
     winSnapSub:'Disable to prevent Windows from intercepting drag-to-edge gestures',
     winSnapEnabled:'Enabled',
@@ -227,7 +289,10 @@ const LANGS = {
     btnReset:'Reset defaults',btnConfig:'Open config file',btnCancel:'Cancel',btnSave:'Save',saved:'Saved ✓',
   },
   es:{
-    tabShortcuts:'Atajos',tabSnapAreas:'Zonas',tabGeneral:'General',
+    tabShortcuts:'Atajos',tabSnapAreas:'Zonas',tabGeneral:'General',tabAbout:'Acerca de',
+    aboutSub:'Administrador de ventanas para Windows',aboutInstalled:'Versión instalada',
+    aboutCheckBtn:'Buscar actualizaciones',aboutChecking:'Comprobando…',
+    aboutUpToDate:'Estás al día',aboutNewVer:'Nueva versión disponible',
     winSnapTitle:'Windows Snap (AeroSnap)',
     winSnapSub:'Desactivar para evitar que Windows intercepte gestos de arrastre al borde',
     winSnapEnabled:'Activado',
@@ -578,8 +643,41 @@ window.showSaved=function(){
   m.classList.add('show');setTimeout(()=>m.classList.remove('show'),2000);
 };
 
+// ── About tab ─────────────────────────────────────────────────────────────────
+function buildAbout(){
+  document.getElementById('versionNum').textContent = window._version || '—';
+}
+
+function runCheckUpdates(){
+  const btn  = document.getElementById('checkUpdBtn');
+  const stat = document.getElementById('updateStatus');
+  btn.disabled = true;
+  btn.querySelector('[data-i18n]').innerHTML = T('aboutChecking');
+  stat.textContent = '';
+  goCheckUpdates().then(result => {
+    btn.disabled = false;
+    btn.querySelector('[data-i18n]').innerHTML = T('aboutCheckBtn');
+    if (result === 'uptodate') {
+      stat.style.color = '#107c10';
+      stat.textContent = '✓ ' + T('aboutUpToDate');
+    } else if (result.startsWith('new:')) {
+      stat.style.color = '#d97706';
+      stat.textContent = '↑ ' + T('aboutNewVer') + ': ' + result.slice(4);
+    } else {
+      stat.style.color = '#888';
+      stat.textContent = result;
+    }
+  }).catch(() => {
+    btn.disabled = false;
+    btn.querySelector('[data-i18n]').innerHTML = T('aboutCheckBtn');
+    stat.style.color = '#888';
+    stat.textContent = 'Could not reach update server';
+  });
+}
+
 buildShortcuts();
 buildSnapAreas();
 buildGeneral();
+buildAbout();
 </script>
 </body></html>`
