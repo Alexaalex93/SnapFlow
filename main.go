@@ -14,9 +14,15 @@ import (
 	"github.com/gonutz/w32/v2"
 )
 
+// appVersion is overwritten at build time via:
+//
+//	go build -ldflags "-X main.appVersion=1.2.3"
+//
+// Must be a var (not const) for ldflags -X to work.
+var appVersion = "dev"
+
 const (
-	appName    = "SnapFlow"
-	appVersion = "1.0.0"
+	appName = "SnapFlow"
 
 	wmOpenSettings = w32.WM_APP + 1
 	wmDoQuit       = w32.WM_APP + 2
