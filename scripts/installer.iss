@@ -68,6 +68,8 @@ Filename: "taskkill.exe"; Parameters: "/F /IM {#AppExe}"; \
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
 begin
   if CurStep = ssInstall then
     Exec('taskkill.exe', '/F /IM {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
