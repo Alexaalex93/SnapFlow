@@ -67,6 +67,12 @@ Filename: "taskkill.exe"; Parameters: "/F /IM {#AppExe}"; \
   Flags: runhidden; RunOnceId: "KillSnapFlow"
 
 [Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+    Exec('taskkill.exe', '/F /IM {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then

@@ -13,7 +13,7 @@ import (
 
 const (
 	releasesAPIURL = "https://api.github.com/repos/Alexaalex93/SnapFlow/releases/latest"
-	releasesURL    = "https://github.com/Alexaalex93/SnapFlow/releases/latest"
+	releasesURL    = "https://github.com/Alexaalex93/SnapFlow/releases"
 )
 
 // checkForUpdates queries GitHub for the latest release and shows a result dialog.
