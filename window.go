@@ -48,7 +48,27 @@ func applyResize(hwnd w32.HWND, f resizeFunc) (bool, error) {
 	tExtra := adjusted.Top - rect.Top
 	bExtra := -adjusted.Bottom + rect.Bottom
 
-	newPos := f(monInfo.RcWork, adjusted)
+	target := f(monInfo.RcWork, adjusted)
+	work := monInfo.RcWork
+
+	// Windows 10/11 draws a 1px visible accent border around windows.
+	// When snapping flush to the work area edge, that border creates a
+	// visible 1px gap. Extend by 1px on each flush edge to push the
+	// border off-screen so the window content is truly edge-to-edge.
+	if target.Left == work.Left {
+		target.Left -= 1
+	}
+	if target.Top == work.Top {
+		target.Top -= 1
+	}
+	if target.Right == work.Right {
+		target.Right += 1
+	}
+	if target.Bottom == work.Bottom {
+		target.Bottom += 1
+	}
+
+	newPos := target
 	newPos.Left -= lExtra
 	newPos.Top -= tExtra
 	newPos.Right += rExtra
