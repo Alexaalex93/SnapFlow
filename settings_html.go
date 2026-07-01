@@ -286,6 +286,7 @@ const LANGS = {
     gGap:'Gap Between Windows',gGapSize:'Gap size',gGapSizeSub:'Space inserted between snapped windows',
     gAlmost:'Almost Maximize',gW:'Width',gH:'Height',
     gResize:'Resize Step',gStep:'Step size (Larger / Smaller actions)',
+    gStartup:'Startup',gAutorun:'Launch at login',gAutorunSub:'Start SnapFlow automatically when you log in to Windows',
     btnReset:'Reset defaults',btnConfig:'Open config file',btnCancel:'Cancel',btnSave:'Save',saved:'Saved ✓',
   },
   es:{
@@ -309,6 +310,7 @@ const LANGS = {
     gGap:'Espacio entre ventanas',gGapSize:'Tamaño del espacio',gGapSizeSub:'Espacio entre ventanas ajustadas',
     gAlmost:'Casi maximizar',gW:'Ancho',gH:'Alto',
     gResize:'Paso de redimensión',gStep:'Tamaño de paso (Ampliar / Reducir)',
+    gStartup:'Inicio',gAutorun:'Iniciar al iniciar sesión',gAutorunSub:'Ejecutar SnapFlow automáticamente al iniciar sesión en Windows',
     btnReset:'Restaurar valores',btnConfig:'Abrir configuración',btnCancel:'Cancelar',btnSave:'Guardar',saved:'Guardado ✓',
   },
 };
@@ -602,6 +604,17 @@ function buildGeneral(){
         <div class="gen-lbl"><div class="gen-lbl-main">${T('gStep')}</div></div>
         <input class="num-in" id="sizeStep" type="number" min="1" max="200" value="${g.sizeStep}">
         <span class="gen-sfx">px</span>
+      </div>
+    </div>
+    <div class="gen-card">
+      <div class="gen-card-title">${T('gStartup')}</div>
+      <div class="gen-row">
+        <div class="gen-lbl"><div class="gen-lbl-main">${T('gAutorun')}</div>
+          <div class="gen-lbl-sub">${T('gAutorunSub')}</div></div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+          <input type="checkbox" id="autorunEnabled" style="width:14px;height:14px;accent-color:#0078d4"
+                 ${window._autorun?'checked':''} onchange="goSetAutorun(this.checked)">
+        </label>
       </div>
     </div>` + "`" + `;
 }

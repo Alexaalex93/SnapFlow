@@ -337,6 +337,16 @@ func runSettingsWindow() {
 		w32.ShellExecute(0, "open", releasesURL, "", "", w32.SW_SHOWNORMAL)
 	})
 
+	w.Bind("goSetAutorun", func(enabled bool) {
+		if enabled {
+			AutoRunEnable()
+		} else {
+			AutoRunDisable()
+		}
+	})
+
+	autorun, _ := AutoRunEnabled()
+	autorunJSON, _ := json.Marshal(autorun)
 	winSnap, _ := json.Marshal(WindowsSnapEnabled())
 	shortcuts, _ := json.Marshal(buildShortcutEntries())
 	general, _ := json.Marshal(GeneralSettings{
@@ -368,7 +378,8 @@ func runSettingsWindow() {
 		window._snapAreas = %s;
 		window._winSnap   = %s;
 		window._version   = %s;
-	`, string(shortcuts), string(general), string(snapAreas), string(winSnap), string(version)))
+		window._autorun   = %s;
+	`, string(shortcuts), string(general), string(snapAreas), string(winSnap), string(version), string(autorunJSON)))
 
 	tmpPath := filepath.Join(os.TempDir(), "snapflow_settings.html")
 	if err := os.WriteFile(tmpPath, []byte(settingsHTML), 0644); err != nil {
