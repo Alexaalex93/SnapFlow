@@ -223,7 +223,18 @@ func shortcutChipText(mod, vk int) string {
 func runSettingsWindow() {
 	w := webview.NewWithOptions(webview.WebViewOptions{Debug: false, Window: nil})
 	if w == nil {
-		fmt.Println("warn: WebView2 not available")
+		result := w32.MessageBox(0,
+			"The Settings window requires Microsoft WebView2 Runtime,\n"+
+				"which is not available on this computer.\n\n"+
+				"You can still configure SnapFlow by editing the config file directly.\n\n"+
+				"Open config file now?",
+			appName+" — Settings",
+			w32.MB_ICONWARNING|w32.MB_YESNO)
+		if result == w32.IDYES {
+			if store := appCfgStore; store != nil {
+				w32.ShellExecute(0, "open", store.path, "", "", w32.SW_SHOWNORMAL)
+			}
+		}
 		return
 	}
 	defer w.Destroy()
