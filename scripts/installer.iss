@@ -3,7 +3,13 @@
 ; Requires snapflow.exe to be in ..\dist\ relative to this script.
 
 #define AppName    "SnapFlow"
-#define AppVersion "1.0.0"
+; The real version is passed on the command line by the release workflow:
+;   iscc scripts\installer.iss /DAppVersion=1.0.123
+; Only fall back to 1.0.0 when built by hand without it. (An unconditional
+; #define here overrode /D, so Add/Remove Programs always showed 1.0.0.)
+#ifndef AppVersion
+  #define AppVersion "1.0.0"
+#endif
 #define AppExe     "snapflow.exe"
 #define AppURL     "https://github.com/Alexaalex93/SnapFlow"
 
@@ -16,6 +22,10 @@ AppId                   = {{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName                 = {#AppName}
 AppVersion              = {#AppVersion}
 AppVerName              = {#AppName} {#AppVersion}
+AppPublisher            = {#AppName}
+UninstallDisplayName    = {#AppName}
+VersionInfoVersion      = {#AppVersion}
+VersionInfoProductVersion = {#AppVersion}
 AppPublisherURL         = {#AppURL}
 AppSupportURL           = {#AppURL}/issues
 DefaultDirName          = {localappdata}\{#AppName}
