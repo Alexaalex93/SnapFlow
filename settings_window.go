@@ -158,6 +158,7 @@ func runSettingsWindow() {
 		newCfg.SnapByDragging = sa.SnapByDragging
 		newCfg.RestoreSize = sa.RestoreSize
 		newCfg.AnimateFootprint = sa.AnimateFootprint
+		newCfg.SquareCorners = sa.SquareCorners
 		newCfg.ZoneTopLeft = sa.TopLeft
 		newCfg.ZoneTop = sa.Top
 		newCfg.ZoneTopRight = sa.TopRight
@@ -273,6 +274,7 @@ func runSettingsWindow() {
 			SnapByDragging:   cfg.SnapByDragging,
 			RestoreSize:      cfg.RestoreSize,
 			AnimateFootprint: cfg.AnimateFootprint,
+			SquareCorners:    cfg.SquareCorners,
 			TopLeft:          cfg.ZoneTopLeft,
 			Top:              cfg.ZoneTop,
 			TopRight:         cfg.ZoneTopRight,

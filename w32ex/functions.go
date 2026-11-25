@@ -152,3 +152,27 @@ func RegisterWindowMessage(name string) uint32 {
 	r, _, _ := procRegisterWindowMessageW.Call(uintptr(unsafe.Pointer(p)))
 	return uint32(r)
 }
+
+var (
+	dwmapi                    = syscall.NewLazyDLL("dwmapi.dll")
+	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
+)
+
+const (
+	DWMWA_WINDOW_CORNER_PREFERENCE = 33 // Windows 11+
+
+	DWMWCP_DEFAULT    = 0
+	DWMWCP_DONOTROUND = 1
+)
+
+// SetWindowCornerPreference sets the Windows 11 corner style of a top-level
+// window (works on other processes' windows). Returns false on Windows 10,
+// where the attribute doesn't exist.
+func SetWindowCornerPreference(hwnd w32.HWND, pref uint32) bool {
+	if procDwmSetWindowAttribute.Find() != nil {
+		return false
+	}
+	hr, _, _ := procDwmSetWindowAttribute.Call(uintptr(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
+		uintptr(unsafe.Pointer(&pref)), unsafe.Sizeof(pref))
+	return hr == 0
+}

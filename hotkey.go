@@ -145,6 +145,9 @@ func applyConfig(newCfg *AppConfig) {
 	if overlay != nil {
 		overlay.Configure(newCfg.AnimateFootprint, newCfg.FootprintAlpha)
 	}
+	if !newCfg.SquareCorners {
+		roundAllCorners()
+	}
 	if old == nil || !sameShortcuts(old, newCfg) {
 		if failed := registerHotKeys(newCfg); len(failed) > 0 {
 			notifyShortcutConflicts(failed, true)

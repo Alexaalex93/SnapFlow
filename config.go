@@ -61,6 +61,7 @@ type AppConfig struct {
 	SnapByDragging   bool `json:"snapByDragging"`   // default true
 	RestoreSize      bool `json:"restoreSize"`      // restore original size when dragging a snapped window out
 	AnimateFootprint bool `json:"animateFootprint"` // default true
+	SquareCorners    bool `json:"squareCorners"`    // snapped windows get square corners (Windows 11), default true
 
 	// ── Per-zone snap action ─────────────────────────────────────────────────
 	// Each field is a WindowAction name (e.g. "leftHalf", "maximize", "none").
@@ -151,6 +152,7 @@ func defaultConfig() *AppConfig {
 		SnapByDragging:        true,
 		RestoreSize:           true,
 		AnimateFootprint:      true,
+		SquareCorners:         true,
 		ZoneTopLeft:           "topLeft",
 		ZoneTop:               "maximize",
 		ZoneTopRight:          "topRight",

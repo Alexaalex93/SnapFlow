@@ -607,6 +607,25 @@ func (a WindowAction) UsesCurrentRect() bool {
 	return false
 }
 
+// IsTiling reports whether the action puts the window into a fixed grid
+// position (halves, thirds, quarters…) as opposed to leaving it floating
+// (center, almost-maximize, resize/move steps). Tiled windows get square
+// corners, like Windows' own Snap does.
+func (a WindowAction) IsTiling() bool {
+	if a.UsesCurrentRect() {
+		return false
+	}
+	switch a {
+	case ActionNone, actionCompoundThirds, ActionRestore,
+		ActionAlmostMaximize, ActionCenterProminently,
+		ActionNextDisplay, ActionPreviousDisplay,
+		ActionDisplayOne, ActionDisplayTwo, ActionDisplayThree, ActionDisplayFour,
+		ActionDisplayFive, ActionDisplaySix, ActionDisplaySeven, ActionDisplayEight, ActionDisplayNine:
+		return false
+	}
+	return true
+}
+
 // IsDragSnappable returns true if this action can be triggered by drag-to-snap.
 // Matches Rectangle's isDragSnappable property.
 func (a WindowAction) IsDragSnappable() bool {

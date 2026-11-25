@@ -18,6 +18,7 @@ drag.go            DragManager — WinEvent hooks, move-vs-resize detection, uns
 overlay.go         OverlayRenderer — animated per-pixel-alpha snap preview (own thread)
 window.go          resizeToRect / placeFrame (pixel-exact placement), multi-monitor, window filter
 history.go         WindowHistory — restore rect, last snapped rect, cycle state
+corners.go         square corners on snapped windows (DWMWA_WINDOW_CORNER_PREFERENCE)
 hotkey.go          configurable hotkeys (register/re-register), main message loop, applyConfig
 conflict.go        hotkey-conflict + elevated-window notifications (tray balloons)
 tray.go            tray icon/menu, notifications, TaskbarCreated re-registration
@@ -124,6 +125,14 @@ anti-aliased rounded rect via SDF (only corner bands per-pixel; row middles are 
 ~1ms for 1440p). Animations (ease-out cubic, DwmFlush-paced): appear = fade + 94%→100% zoom,
 retarget = glide, hide = fade. Colour = Windows accent (`HKCU\Software\Microsoft\Windows\DWM\AccentColor`),
 fill opacity = `FootprintAlpha`, `AnimateFootprint=false` → instant.
+
+### `corners.go`
+
+Windows 11 squares the corners of windows it snaps. After a placement, `updateCorners` sets
+`DWMWCP_DONOTROUND` when `SquareCorners` is on and the action `IsTiling()` (grid positions;
+not Center/Almost Maximize/resize steps). Works cross-process. Only windows SnapFlow squared
+are reset to `DWMWCP_DEFAULT` (on Restore, unsnap-drag, free drop, option off, or quit), so
+apps that pick their own corner style are never touched. No-op on Windows 10.
 
 ### `history.go`
 

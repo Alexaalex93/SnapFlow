@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"runtime"
 	"syscall"
 	"testing"
@@ -160,5 +161,61 @@ func pump(d time.Duration) {
 			w32.DispatchMessage(&m)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Square corners must work on a window owned by ANOTHER process (the real
+// case). A red WinForms window is opened via PowerShell; the pixel just
+// inside its bottom-left corner is outside the rounded shape (background
+// shows through) until SnapFlow squares the corners, then it is red.
+func TestGUI_SquareCornersCrossProcess(t *testing.T) {
+	if os.Getenv("SNAPFLOW_GUI_TESTS") != "1" {
+		t.Skip("set SNAPFLOW_GUI_TESTS=1 to run real-window tests")
+	}
+	w32ex.SetProcessDPIAwareBestEffort()
+	const title = "SnapFlow corner test"
+	script := `Add-Type -AssemblyName System.Windows.Forms;` +
+		`$f=New-Object Windows.Forms.Form;$f.Text='` + title + `';$f.BackColor='Red';` +
+		`$f.StartPosition='Manual';$f.Left=300;$f.Top=300;$f.Width=500;$f.Height=350;` +
+		`$f.TopMost=$true;$t=New-Object Windows.Forms.Timer;$t.Interval=6000;$t.add_Tick({$f.Close()});$t.Start();` +
+		`[Windows.Forms.Application]::Run($f)`
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Process.Kill()
+
+	var hwnd w32.HWND
+	for i := 0; i < 100 && hwnd == 0; i++ {
+		time.Sleep(100 * time.Millisecond)
+		hwnd = w32.FindWindow("", title)
+	}
+	if hwnd == 0 {
+		t.Fatal("test window did not appear")
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	f, _ := frameRect(hwnd)
+	probe := func() (r, g, b byte) {
+		hdc := w32.GetDC(0)
+		defer w32.ReleaseDC(0, hdc)
+		c, _, _ := gdi32DLL.NewProc("GetPixel").Call(uintptr(hdc), uintptr(f.Left+1), uintptr(f.Bottom-2))
+		return byte(c), byte(c >> 8), byte(c >> 16)
+	}
+	isRed := func(r, g, b byte) bool { return r > 200 && g < 60 && b < 60 }
+
+	if r, g, b := probe(); isRed(r, g, b) {
+		t.Skip("corner already square (Windows 10 or rounding disabled) — nothing to verify")
+	}
+	appCfg = defaultConfig()
+	squareCorners(hwnd)
+	time.Sleep(300 * time.Millisecond)
+	if r, g, b := probe(); !isRed(r, g, b) {
+		t.Fatalf("corner pixel after squaring = (%d,%d,%d), want red", r, g, b)
+	}
+	roundCorners(hwnd)
+	time.Sleep(300 * time.Millisecond)
+	if r, g, b := probe(); isRed(r, g, b) {
+		t.Fatal("corner still square after roundCorners")
 	}
 }

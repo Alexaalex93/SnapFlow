@@ -142,6 +142,7 @@ func startup() error {
 
 func shutdown() {
 	unregisterAllHotKeys()
+	roundAllCorners() // don't leave free-floating windows square after we exit
 	if dragMgr != nil {
 		dragMgr.Stop()
 	}
@@ -181,6 +182,7 @@ func executeAction(hwnd w32.HWND, action WindowAction) {
 		} else if w32ex.IsZoomed(hwnd) {
 			w32.ShowWindow(hwnd, w32.SW_RESTORE)
 		}
+		roundCorners(hwnd)
 		return
 
 	case ActionNextDisplay:
@@ -222,6 +224,7 @@ func executeAction(hwnd w32.HWND, action WindowAction) {
 		return
 	}
 	if got.Width() > 0 {
+		updateCorners(hwnd, effective)
 		windowHistory.RecordSnap(hwnd, cur, got)
 		if cycleIdx >= 0 {
 			windowHistory.SetCycle(hwnd, action, cycleIdx)

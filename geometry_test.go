@@ -103,3 +103,16 @@ func TestActionsUsingCurrentRect(t *testing.T) {
 		t.Fatal("internal markers must never be snappable")
 	}
 }
+
+func TestIsTiling(t *testing.T) {
+	for _, a := range []WindowAction{ActionLeftHalf, ActionFirstThird, ActionTopLeft, ActionBottomRightSixth, ActionMaximize} {
+		if !a.IsTiling() {
+			t.Errorf("action %d should be tiling (square corners)", a)
+		}
+	}
+	for _, a := range []WindowAction{ActionCenter, ActionAlmostMaximize, ActionLarger, ActionRestore, ActionNone, actionCompoundThirds} {
+		if a.IsTiling() {
+			t.Errorf("action %d leaves the window floating (rounded corners)", a)
+		}
+	}
+}

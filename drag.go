@@ -149,6 +149,7 @@ func (d *DragManager) onMoveStart(hwnd w32.HWND) {
 			nf := unsnapFrame(frame, restore, pt)
 			if in, ok := windowInsets(hwnd); ok && setWindowFrame(hwnd, nf, in, 0) {
 				windowHistory.Forget(hwnd)
+				roundCorners(hwnd)
 				d.unsnapped = true
 				d.restoreSize = restore
 				if f, ok := frameRect(hwnd); ok {
@@ -262,6 +263,9 @@ func (d *DragManager) onMoveEnd(hwnd w32.HWND) {
 
 	if !moved || cancelled || !workOK || action == ActionNone || !action.IsDragSnappable() {
 		d.overlay.Hide()
+		if moved && !cancelled {
+			roundCorners(hwnd) // dropped somewhere free: it's floating again
+		}
 		// Fallback for apps whose move loop overrode our unsnap resize.
 		if unsnapped && !cancelled && (frameNow.Width() != restoreSize.Width() || frameNow.Height() != restoreSize.Height()) {
 			nf := unsnapFrame(frameNow, restoreSize, pt)
@@ -283,6 +287,7 @@ func (d *DragManager) onMoveEnd(hwnd w32.HWND) {
 	target := action.Calculate(work, cur, appCfg)
 	got, err := resizeToRect(hwnd, target)
 	if err == nil && got.Width() > 0 {
+		updateCorners(hwnd, action)
 		windowHistory.RecordSnap(hwnd, before, got)
 	}
 	// Hide AFTER placing: the preview fades out on top of the window as it
