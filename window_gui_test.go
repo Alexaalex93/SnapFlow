@@ -113,7 +113,7 @@ func TestGUI_OverlayShowsAndHides(t *testing.T) {
 
 	work, _ := monitorWork(w32ex.MonitorFromPoint(w32.POINT{X: 0, Y: 0}, w32ex.MONITOR_DEFAULTTOPRIMARY))
 	r := w32.RECT{Left: work.Left + 100, Top: work.Top + 100, Right: work.Left + 700, Bottom: work.Top + 500}
-	o.Show(r)
+	o.Show(r, true)
 	time.Sleep(400 * time.Millisecond)
 	if !w32.IsWindowVisible(o.hwnd) {
 		t.Fatal("overlay not visible after Show")
@@ -124,7 +124,7 @@ func TestGUI_OverlayShowsAndHides(t *testing.T) {
 
 	// Retarget: glides to the new rect.
 	r2 := w32.RECT{Left: work.Left + 300, Top: work.Top + 150, Right: work.Left + 900, Bottom: work.Top + 650}
-	o.Show(r2)
+	o.Show(r2, false)
 	time.Sleep(400 * time.Millisecond)
 	if wr := w32.GetWindowRect(o.hwnd); wr == nil || *wr != r2 {
 		t.Fatalf("overlay at %+v after retarget, want %+v", wr, r2)

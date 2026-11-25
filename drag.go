@@ -224,7 +224,8 @@ func (d *DragManager) onLocationChange(hwnd w32.HWND) {
 		d.overlay.Hide()
 		return
 	}
-	d.overlay.Show(d.previewRect(hwnd, action, work))
+	// Same corners the window will get once it lands.
+	d.overlay.Show(d.previewRect(hwnd, action, work), appCfg.SquareCorners && action.IsTiling())
 }
 
 func (d *DragManager) previewRect(hwnd w32.HWND, action WindowAction, work w32.RECT) w32.RECT {

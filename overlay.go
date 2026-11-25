@@ -70,6 +70,7 @@ const (
 type overlayCmd struct {
 	kind   overlayCmdKind
 	bounds w32.RECT
+	square bool
 }
 
 // OverlayRenderer displays the animated snap-preview rectangle.
@@ -109,8 +110,13 @@ func (o *OverlayRenderer) Configure(animate bool, fillAlpha float64) {
 	o.fillAlpha.Store(math.Float32bits(float32(fillAlpha)))
 }
 
-// Show moves/morphs the preview to bounds (screen coordinates).
-func (o *OverlayRenderer) Show(bounds w32.RECT) { o.send(overlayCmd{kind: cmdShow, bounds: bounds}) }
+// Show moves/morphs the preview to bounds (screen coordinates). The preview
+// covers exactly the area the window will occupy; square=true draws square
+// corners (the window will be snapped with square corners), otherwise the
+// standard Windows 11 window radius.
+func (o *OverlayRenderer) Show(bounds w32.RECT, square bool) {
+	o.send(overlayCmd{kind: cmdShow, bounds: bounds, square: square})
+}
 
 // Hide fades the preview out.
 func (o *OverlayRenderer) Hide() { o.send(overlayCmd{kind: cmdHide}) }
@@ -284,7 +290,8 @@ type overlayAnim struct {
 	fadeStart                 time.Time
 	fadeDur                   time.Duration
 
-	color [3]float32 // accent colour (0..1) captured when the card appears
+	color  [3]float32 // accent colour (0..1) captured when the card appears
+	square bool       // square corners (matches the window's final corners)
 }
 
 func (a *overlayAnim) animating() bool { return a.moving || a.fading }
@@ -304,6 +311,7 @@ func (o *OverlayRenderer) apply(a *overlayAnim, c overlayCmd) {
 			return
 		}
 		b := toFrect(c.bounds)
+		a.square = c.square
 		appearing := !a.visible || (a.alphaTo == 0 && a.alpha < 0.15)
 		if appearing {
 			a.color = accentColor()
@@ -377,7 +385,7 @@ func (o *OverlayRenderer) step(a *overlayAnim, s *overlaySurface) {
 		return
 	}
 	scale := float32(w32ex.GetDpiForMonitor(w32.MonitorFromRect(&r, w32.MONITOR_DEFAULTTONEAREST))) / 96
-	st := overlayStyle(scale, a.color, math.Float32frombits(o.fillAlpha.Load()))
+	st := overlayStyle(scale, a.color, math.Float32frombits(o.fillAlpha.Load()), a.square)
 	if !s.render(w, h, st) {
 		return
 	}
@@ -397,16 +405,23 @@ type roundRectStyle struct {
 	fill, edge            [4]float32 // r, g, b, a in 0..1 (straight alpha)
 }
 
-func overlayStyle(scale float32, c [3]float32, fillAlpha float32) roundRectStyle {
+// overlayStyle: the preview fills the target rect edge to edge (no inset),
+// so it shows exactly where the window will land, with the same corners the
+// window will have: square when snapped, Windows 11's 8px radius otherwise.
+func overlayStyle(scale float32, c [3]float32, fillAlpha float32, square bool) roundRectStyle {
 	if scale <= 0 {
 		scale = 1
 	}
 	// Border is the accent lightened a touch so it reads on dark wallpapers too.
 	light := func(v float32) float32 { return v + (1-v)*0.25 }
+	radius := float32(0)
+	if !square {
+		radius = 8 * scale
+	}
 	return roundRectStyle{
-		radius: 10 * scale,
+		radius: radius,
 		border: float32(math.Max(1, math.Round(float64(2*scale)))),
-		inset:  float32(math.Round(float64(3 * scale))),
+		inset:  0,
 		fill:   [4]float32{c[0], c[1], c[2], fillAlpha},
 		edge:   [4]float32{light(c[0]), light(c[1]), light(c[2]), 0.92},
 	}

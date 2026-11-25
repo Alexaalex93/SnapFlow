@@ -124,7 +124,9 @@ Own locked OS thread with its own window + message pump (idle in `GetMessage`, w
 `PostThreadMessage`). Rendering: `UpdateLayeredWindow` with a reusable top-down 32bpp DIB,
 anti-aliased rounded rect via SDF (only corner bands per-pixel; row middles are memmove fills —
 ~1ms for 1440p). Animations (ease-out cubic, DwmFlush-paced): appear = fade + 94%→100% zoom,
-retarget = glide, hide = fade. Colour = Windows accent (`HKCU\Software\Microsoft\Windows\DWM\AccentColor`),
+retarget = glide, hide = fade. The preview fills the target rect edge to edge (no inset) and uses the
+corners the window will end up with: square when `SquareCorners` is on and the action
+`IsTiling()`, otherwise Windows 11's 8px radius (`Show(bounds, square)`). Colour = Windows accent (`HKCU\Software\Microsoft\Windows\DWM\AccentColor`),
 fill opacity = `FootprintAlpha`, `AnimateFootprint=false` → instant.
 
 ### `animate.go` — animated window movement
