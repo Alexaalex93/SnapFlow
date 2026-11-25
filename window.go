@@ -1,8 +1,11 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"strings"
+	"sync"
+	"syscall"
+	"time"
 
 	"snapflow/w32ex"
 
@@ -12,114 +15,264 @@ import (
 const (
 	gwlExStyle = -20
 	gwlStyle   = -16
+
+	swpNoOwnerZOrder = 0x0200
 )
 
-type resizeFunc func(disp, cur w32.RECT) w32.RECT
+var errAccessDenied = errors.New("access denied (window belongs to an elevated app)")
 
-// applyResize moves hwnd by calling f(workArea, currentFrame) → newFrame.
-// It accounts for Windows 10/11 invisible border offsets and DPI scaling.
-func applyResize(hwnd w32.HWND, f resizeFunc) (bool, error) {
-	if !isZonableWindow(hwnd) {
-		return false, nil
-	}
-	rect := w32.GetWindowRect(hwnd)
-	mon := w32.MonitorFromWindow(hwnd, w32.MONITOR_DEFAULTTONEAREST)
-	hdc := w32.GetDC(hwnd)
-	displayDPI := w32.GetDeviceCaps(hdc, w32.LOGPIXELSY)
-	w32.ReleaseDC(hwnd, hdc)
-	if displayDPI == 0 {
-		displayDPI = 96 // fallback to standard DPI if GetDC/GetDeviceCaps failed
-	}
+// ── Frame geometry ────────────────────────────────────────────────────────────
+//
+// Windows 10/11 windows have an invisible ~7px resize border on the left,
+// right and bottom. GetWindowRect includes it; the DWM "extended frame
+// bounds" do not. All snap geometry in SnapFlow works on the *visible frame*
+// so windows line up edge-to-edge, and the border is added back right before
+// SetWindowPos.
+//
+// SnapFlow is Per-Monitor-V2 DPI aware, so both rects are in physical screen
+// pixels and can be subtracted directly. (The previous code rescaled the DWM
+// rect by GetDeviceCaps/GetDpiForWindow, which corrupted the position of
+// DPI-unaware apps and of windows on a monitor whose scale differs from the
+// primary one — one of the "sometimes it doesn't snap right" bugs.)
 
-	var monInfo w32.MONITORINFO
-	if !w32.GetMonitorInfo(mon, &monInfo) {
-		return false, fmt.Errorf("GetMonitorInfo: %d", w32.GetLastError())
+type insets struct{ l, t, r, b int32 }
+
+// frameRect returns the visible frame of hwnd, falling back to GetWindowRect
+// when DWM can't answer (e.g. some legacy or DWM-excluded windows).
+func frameRect(hwnd w32.HWND) (w32.RECT, bool) {
+	if ok, f := w32.DwmGetWindowAttributeEXTENDED_FRAME_BOUNDS(hwnd); ok && f.Width() > 0 && f.Height() > 0 {
+		return f, true
 	}
-	ok, frame := w32.DwmGetWindowAttributeEXTENDED_FRAME_BOUNDS(hwnd)
+	if r := w32.GetWindowRect(hwnd); r != nil {
+		return *r, true
+	}
+	return w32.RECT{}, false
+}
+
+// windowInsets returns the invisible border between GetWindowRect and the
+// visible frame. Insets are clamped to sane values so a bogus DWM answer
+// can never throw a window off-screen.
+func windowInsets(hwnd w32.HWND) (insets, bool) {
+	r := w32.GetWindowRect(hwnd)
+	if r == nil {
+		return insets{}, false
+	}
+	f, ok := frameRect(hwnd)
 	if !ok {
-		return false, fmt.Errorf("DwmGetWindowAttribute: %d", w32.GetLastError())
+		return insets{}, false
 	}
-	windowDPI := w32ex.GetDpiForWindow(hwnd)
-	adjusted := scaleRect(frame, int32(windowDPI), int32(displayDPI))
+	in := insets{l: f.Left - r.Left, t: f.Top - r.Top, r: r.Right - f.Right, b: r.Bottom - f.Bottom}
+	clamp := func(v int32) int32 {
+		if v < 0 || v > 64 {
+			return 0
+		}
+		return v
+	}
+	in.l, in.t, in.r, in.b = clamp(in.l), clamp(in.t), clamp(in.r), clamp(in.b)
+	return in, true
+}
 
-	// Invisible border compensation (Windows 10/11 shadow frames).
-	lExtra := adjusted.Left - rect.Left
-	rExtra := -adjusted.Right + rect.Right
-	tExtra := adjusted.Top - rect.Top
-	bExtra := -adjusted.Bottom + rect.Bottom
+func setWindowFrame(hwnd w32.HWND, frame w32.RECT, in insets, flags uint) bool {
+	x := frame.Left - in.l
+	y := frame.Top - in.t
+	w := frame.Width() + in.l + in.r
+	h := frame.Height() + in.t + in.b
+	return w32.SetWindowPos(hwnd, 0, int(x), int(y), int(w), int(h),
+		w32.SWP_NOZORDER|w32.SWP_NOACTIVATE|swpNoOwnerZOrder|flags)
+}
 
-	target := f(monInfo.RcWork, adjusted)
-	work := monInfo.RcWork
-
-	// Windows 10/11 draws a 1px visible accent border around windows.
-	// When snapping flush to the work area edge, that border creates a
-	// visible 1px gap. Extend by 1px on each flush edge to push the
-	// border off-screen so the window content is truly edge-to-edge.
+// extendFlushEdges pushes every edge that sits exactly on the work-area
+// border 1px outward, so the 1px accent border Windows 11 draws around
+// windows ends up off-screen and the content is truly edge-to-edge.
+func extendFlushEdges(target, work w32.RECT) w32.RECT {
 	if target.Left == work.Left {
-		target.Left -= 1
+		target.Left--
 	}
 	if target.Top == work.Top {
-		target.Top -= 1
+		target.Top--
 	}
 	if target.Right == work.Right {
-		target.Right += 1
+		target.Right++
 	}
 	if target.Bottom == work.Bottom {
-		target.Bottom += 1
+		target.Bottom++
 	}
-
-	newPos := target
-	newPos.Left -= lExtra
-	newPos.Top -= tExtra
-	newPos.Right += rExtra
-	newPos.Bottom += bExtra
-
-	if rectEqual(rect, &newPos) {
-		return false, nil
-	}
-	w32.ShowWindow(hwnd, w32.SW_SHOWNORMAL)
-	if !w32.SetWindowPos(hwnd, 0, int(newPos.Left), int(newPos.Top), int(newPos.Width()), int(newPos.Height()), w32.SWP_NOZORDER|w32.SWP_NOACTIVATE) {
-		return false, fmt.Errorf("SetWindowPos: %d", w32.GetLastError())
-	}
-	return true, nil
+	return target
 }
 
-// resizeToRect moves hwnd to target (in work-area coordinates).
-func resizeToRect(hwnd w32.HWND, target w32.RECT) (bool, error) {
-	return applyResize(hwnd, func(_, _ w32.RECT) w32.RECT { return target })
+// ── Placement ─────────────────────────────────────────────────────────────────
+
+// placement generation per window: a delayed verification only acts if no
+// newer placement happened in the meantime.
+var (
+	placeMu  sync.Mutex
+	placeGen = map[w32.HWND]uint64{}
+)
+
+func bumpPlaceGen(hwnd w32.HWND) uint64 {
+	placeMu.Lock()
+	defer placeMu.Unlock()
+	placeGen[hwnd]++
+	if len(placeGen) > 256 {
+		for h := range placeGen {
+			if !w32.IsWindow(h) {
+				delete(placeGen, h)
+			}
+		}
+	}
+	return placeGen[hwnd]
 }
 
-func maximize(hwnd w32.HWND) error {
+func currentPlaceGen(hwnd w32.HWND) uint64 {
+	placeMu.Lock()
+	defer placeMu.Unlock()
+	return placeGen[hwnd]
+}
+
+// resizeToRect moves hwnd so that its visible frame matches target
+// (screen coordinates). Returns the frame actually achieved.
+func resizeToRect(hwnd w32.HWND, target w32.RECT) (w32.RECT, error) {
 	if !isZonableWindow(hwnd) {
-		return nil
+		return w32.RECT{}, nil
 	}
-	w32.ShowWindow(hwnd, w32.SW_MAXIMIZE)
-	return nil
+	if target.Width() <= 0 || target.Height() <= 0 {
+		return w32.RECT{}, nil
+	}
+	work, ok := monitorWork(w32.MonitorFromRect(&target, w32.MONITOR_DEFAULTTONEAREST))
+	if !ok {
+		return w32.RECT{}, errors.New("no monitor for target")
+	}
+	got, err := placeFrame(hwnd, target, work)
+	if err != nil {
+		if errors.Is(err, errAccessDenied) {
+			notifyElevatedOnce()
+		}
+		return got, err
+	}
+
+	// Some apps (Electron, Java, terminals…) re-apply their own bounds right
+	// after a move, or receive a late WM_DPICHANGED. Check once shortly
+	// afterwards and re-apply if the window drifted.
+	gen := bumpPlaceGen(hwnd)
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		if currentPlaceGen(hwnd) != gen || !w32.IsWindow(hwnd) ||
+			w32ex.IsZoomed(hwnd) || w32ex.IsIconic(hwnd) {
+			return
+		}
+		if dragMgr != nil && dragMgr.IsDragging(hwnd) {
+			return
+		}
+		if cur, ok := frameRect(hwnd); ok && !rectNear(cur, got, 2) {
+			placeFrame(hwnd, target, work)
+		}
+	}()
+	return got, nil
 }
 
-func toggleAlwaysOnTop(hwnd w32.HWND) {
+// placeFrame does the actual positioning work:
+//  1. un-maximise / un-minimise (border metrics differ in those states),
+//  2. position using the current invisible-border insets,
+//  3. second pass if the move changed DPI (insets and size change after a
+//     cross-monitor move),
+//  4. if the app enforces a minimum size bigger than the target, re-anchor
+//     the window to the side the target was anchored to and keep it
+//     inside the work area instead of letting it hang off-screen.
+func placeFrame(hwnd w32.HWND, target, work w32.RECT) (w32.RECT, error) {
+	if w32ex.IsIconic(hwnd) || w32ex.IsZoomed(hwnd) {
+		w32.ShowWindow(hwnd, w32.SW_RESTORE)
+	}
+	want := extendFlushEdges(target, work)
+
+	in, ok := windowInsets(hwnd)
+	if !ok {
+		return w32.RECT{}, errors.New("cannot read window bounds")
+	}
+	if !setWindowFrame(hwnd, want, in, 0) {
+		if syscall.Errno(w32.GetLastError()) == syscall.ERROR_ACCESS_DENIED {
+			return w32.RECT{}, errAccessDenied
+		}
+		return w32.RECT{}, errors.New("SetWindowPos failed")
+	}
+
+	got, _ := frameRect(hwnd)
+	if !rectNear(got, want, 0) {
+		// Second pass: picks up new insets after a DPI change.
+		if in2, ok := windowInsets(hwnd); ok {
+			setWindowFrame(hwnd, want, in2, 0)
+			in = in2
+		}
+		got, _ = frameRect(hwnd)
+	}
+
+	// Minimum-size handling.
+	if got.Width() > want.Width()+1 || got.Height() > want.Height()+1 {
+		pos := reanchor(got, want, work)
+		if pos.Left != got.Left || pos.Top != got.Top {
+			setWindowFrame(hwnd, pos, in, w32.SWP_NOSIZE)
+			got, _ = frameRect(hwnd)
+		}
+	}
+	return got, nil
+}
+
+// reanchor moves an oversized frame `got` so it hugs the same edges as the
+// intended rect `want`, staying inside work where possible. Pure geometry.
+func reanchor(got, want, work w32.RECT) w32.RECT {
+	gw, gh := got.Width(), got.Height()
+	left, top := got.Left, got.Top
+	if gw > want.Width() {
+		switch {
+		case want.Right >= work.Right && want.Left > work.Left:
+			left = want.Right - gw // right-anchored
+		case want.Left <= work.Left:
+			left = want.Left
+		default:
+			left = want.Left + (want.Width()-gw)/2
+		}
+		if left+gw > work.Right+1 {
+			left = work.Right + 1 - gw
+		}
+		if left < work.Left-1 {
+			left = work.Left - 1
+		}
+	}
+	if gh > want.Height() {
+		switch {
+		case want.Bottom >= work.Bottom && want.Top > work.Top:
+			top = want.Bottom - gh
+		case want.Top <= work.Top:
+			top = want.Top
+		default:
+			top = want.Top + (want.Height()-gh)/2
+		}
+		if top+gh > work.Bottom+1 {
+			top = work.Bottom + 1 - gh
+		}
+		if top < work.Top-1 {
+			top = work.Top - 1
+		}
+	}
+	return w32.RECT{Left: left, Top: top, Right: left + gw, Bottom: top + gh}
+}
+
+func maximize(hwnd w32.HWND) {
 	if !isZonableWindow(hwnd) {
 		return
 	}
-	if w32.GetWindowLong(hwnd, w32.GWL_EXSTYLE)&w32.WS_EX_TOPMOST != 0 {
-		w32.SetWindowPos(hwnd, w32.HWND_NOTOPMOST, 0, 0, 0, 0, w32.SWP_NOMOVE|w32.SWP_NOSIZE)
-	} else {
-		w32.SetWindowPos(hwnd, w32.HWND_TOPMOST, 0, 0, 0, 0, w32.SWP_NOMOVE|w32.SWP_NOSIZE)
-	}
+	bumpPlaceGen(hwnd) // cancel pending verifications
+	w32.ShowWindow(hwnd, w32.SW_MAXIMIZE)
 }
 
-// moveToDisplay moves hwnd to the next or previous monitor,
-// scaling the window position proportionally.
+// ── Multi-monitor ─────────────────────────────────────────────────────────────
+
+// moveToDisplay moves hwnd to the next or previous monitor.
 // Translates Rectangle's NextPrevDisplayCalculation.
 func moveToDisplay(hwnd w32.HWND, next bool) {
 	if !isZonableWindow(hwnd) {
 		return
 	}
-	var monitors []w32.HMONITOR
-	EnumMonitors(func(m w32.HMONITOR) bool {
-		monitors = append(monitors, m)
-		return true
-	})
+	monitors := Monitors()
 	if len(monitors) <= 1 {
 		return
 	}
@@ -134,10 +287,8 @@ func moveToDisplay(hwnd w32.HWND, next bool) {
 	if curIdx < 0 {
 		return
 	}
-	var nextIdx int
-	if next {
-		nextIdx = (curIdx + 1) % len(monitors)
-	} else {
+	nextIdx := (curIdx + 1) % len(monitors)
+	if !next {
 		nextIdx = (curIdx - 1 + len(monitors)) % len(monitors)
 	}
 	moveToMonitor(hwnd, monitors[curIdx], monitors[nextIdx])
@@ -147,47 +298,58 @@ func moveToDisplayByIndex(hwnd w32.HWND, idx int) {
 	if !isZonableWindow(hwnd) {
 		return
 	}
-	var monitors []w32.HMONITOR
-	EnumMonitors(func(m w32.HMONITOR) bool {
-		monitors = append(monitors, m)
-		return true
-	})
+	monitors := Monitors()
 	if idx < 0 || idx >= len(monitors) {
 		return
 	}
 	cur := w32.MonitorFromWindow(hwnd, w32.MONITOR_DEFAULTTONEAREST)
+	if cur == monitors[idx] {
+		return
+	}
 	moveToMonitor(hwnd, cur, monitors[idx])
 }
 
+// moveToMonitor maps the window's frame proportionally from one work area to
+// the other (so a left half stays a left half) and keeps maximised windows
+// maximised.
 func moveToMonitor(hwnd w32.HWND, from, to w32.HMONITOR) {
-	var fromInfo, toInfo w32.MONITORINFO
-	if !w32.GetMonitorInfo(from, &fromInfo) || !w32.GetMonitorInfo(to, &toInfo) {
+	fromWork, ok1 := monitorWork(from)
+	toWork, ok2 := monitorWork(to)
+	if !ok1 || !ok2 {
 		return
 	}
-	rect := w32.GetWindowRect(hwnd)
-	if rect == nil {
+	wasMax := w32ex.IsZoomed(hwnd)
+	if wasMax || w32ex.IsIconic(hwnd) {
+		w32.ShowWindow(hwnd, w32.SW_RESTORE)
+	}
+	frame, ok := frameRect(hwnd)
+	if !ok {
 		return
 	}
-	fw, fh := float64(fromInfo.RcWork.Width()), float64(fromInfo.RcWork.Height())
-	tw, th := float64(toInfo.RcWork.Width()), float64(toInfo.RcWork.Height())
-	// Guard against zero-size source work area (degenerate/disconnected monitor).
-	if fw == 0 || fh == 0 {
+	target := mapRectBetween(frame, fromWork, toWork)
+	if _, err := resizeToRect(hwnd, target); err != nil {
 		return
 	}
-
-	relX := float64(rect.Left-fromInfo.RcWork.Left) / fw
-	relY := float64(rect.Top-fromInfo.RcWork.Top) / fh
-	scaleW := tw / fw
-	scaleH := th / fh
-
-	newLeft := toInfo.RcWork.Left + int32(relX*tw)
-	newTop := toInfo.RcWork.Top + int32(relY*th)
-	newW := int32(float64(rect.Width()) * scaleW)
-	newH := int32(float64(rect.Height()) * scaleH)
-
-	w32.ShowWindow(hwnd, w32.SW_SHOWNORMAL)
-	w32.SetWindowPos(hwnd, 0, int(newLeft), int(newTop), int(newW), int(newH), w32.SWP_NOZORDER|w32.SWP_NOACTIVATE)
+	if wasMax {
+		w32.ShowWindow(hwnd, w32.SW_MAXIMIZE)
+	}
 }
+
+// mapRectBetween scales r from one work area into another and clamps it
+// inside the destination. Pure geometry (unit-tested).
+func mapRectBetween(r, from, to w32.RECT) w32.RECT {
+	fw, fh := float64(from.Width()), float64(from.Height())
+	tw, th := float64(to.Width()), float64(to.Height())
+	if fw <= 0 || fh <= 0 {
+		return clampToWork(r, to)
+	}
+	sx := func(x int32) int32 { return to.Left + int32(float64(x-from.Left)*tw/fw+0.5) }
+	sy := func(y int32) int32 { return to.Top + int32(float64(y-from.Top)*th/fh+0.5) }
+	out := w32.RECT{Left: sx(r.Left), Top: sy(r.Top), Right: sx(r.Right), Bottom: sy(r.Bottom)}
+	return clampToWork(out, to)
+}
+
+// ── Small helpers ─────────────────────────────────────────────────────────────
 
 // centerRect centers cur within disp without resizing.
 func centerRect(disp, cur w32.RECT) w32.RECT {
@@ -201,18 +363,20 @@ func centerRect(disp, cur w32.RECT) w32.RECT {
 	}
 }
 
-func scaleRect(src w32.RECT, from, to int32) w32.RECT {
-	return w32.RECT{
-		Left:   src.Left * to / from,
-		Right:  src.Right * to / from,
-		Top:    src.Top * to / from,
-		Bottom: src.Bottom * to / from,
-	}
-}
-
 func rectEqual(a, b *w32.RECT) bool {
 	return a != nil && b != nil &&
 		a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom
+}
+
+// rectNear reports whether every edge of a and b differs by at most tol px.
+func rectNear(a, b w32.RECT, tol int32) bool {
+	d := func(x, y int32) bool {
+		if x > y {
+			return x-y <= tol
+		}
+		return y-x <= tol
+	}
+	return d(a.Left, b.Left) && d(a.Top, b.Top) && d(a.Right, b.Right) && d(a.Bottom, b.Bottom)
 }
 
 // ── Window classification ─────────────────────────────────────────────────────
@@ -242,6 +406,10 @@ func isStandardWindow(hwnd w32.HWND) bool {
 			return false
 		}
 	}
+	// Never manage our own windows (overlay, tray, settings).
+	if overlay != nil && hwnd == overlay.hwnd {
+		return false
+	}
 
 	className, ok := w32.GetClassName(hwnd)
 	if !ok {
@@ -260,19 +428,21 @@ func isStandardWindow(hwnd w32.HWND) bool {
 		return false
 	}
 
-	// Skip genuine floating tool palettes (WS_EX_TOOLWINDOW without a caption).
+	// Skip genuine floating tool palettes (WS_EX_TOOLWINDOW).
 	// Exception: ApplicationFrameWindow is the UWP/Store app host — always allow.
 	if exStyle&w32.WS_EX_TOOLWINDOW == w32.WS_EX_TOOLWINDOW &&
 		!strings.EqualFold(className, "ApplicationFrameWindow") {
 		return false
 	}
 
-	// Skip popup windows that have no min/max buttons AND no caption —
-	// these are typically menus, tooltips, or transient overlays.
-	// (WS_THICKFRAME alone doesn't make something a real resizable window.)
+	// Skip popup windows that have no caption AND no sizing frame —
+	// these are menus, tooltips or transient overlays. Popups with a
+	// thick frame are custom-chrome apps (Spotify, Discord, VS Code
+	// variants…) and must stay snappable.
 	hasCaption := style&w32.WS_CAPTION == w32.WS_CAPTION
+	hasThickFrame := style&w32.WS_THICKFRAME == w32.WS_THICKFRAME
 	isPopup := uint32(style)&w32.WS_POPUP == w32.WS_POPUP
-	if isPopup && !hasCaption {
+	if isPopup && !hasCaption && !hasThickFrame {
 		return false
 	}
 
@@ -286,6 +456,8 @@ func isSystemClassName(name string) bool {
 		"Windows.UI.Core.CoreWindow", // UWP inner-content window (not the frame)
 		"XamlExplorerHostIslandWindow",
 		"PopupHost",
+		"TopLevelWindowForOverflowXamlIsland",
+		"NotifyIconOverflowWindow",
 	}
 	for _, c := range blocked {
 		if strings.EqualFold(c, name) {

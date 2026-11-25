@@ -27,13 +27,15 @@ Download `SnapFlow-x.x.x-Setup.exe` and run it. The installer:
 
 | | |
 |---|---|
-| 🖱 **Drag-to-snap** | Drag any window to an edge or corner — a blue preview shows exactly where it will land |
-| 🎯 **Compound thirds** | Drag along the bottom edge to sweep across thirds — release over 1, 2 or 3 to snap to that fraction |
-| ⌨️ **Keyboard shortcuts** | Full shortcut set matching Rectangle's layout (Ctrl+Alt based) |
-| 🖥 **Multi-monitor** | Move windows between displays with Ctrl+Alt+Win+Arrow |
-| ⚙️ **Settings UI** | Visual settings window with live zone previews — available in English and Spanish |
-| 🔕 **Silent** | Runs in the system tray, no console window, no UAC prompts |
-| 🔄 **Autostart** | Optional launch at login, togglable from the tray menu |
+| 🖱 **Drag-to-snap** | Drag any window to an edge or corner — an animated preview in your Windows accent colour glides between zones and shows exactly where it will land |
+| 🎯 **Compound thirds** | Drag along the bottom edge to sweep across thirds — release over 1, 2 or 3 to snap to that fraction (sweep back to shrink) |
+| ↩️ **Restore on unsnap** | Drag a snapped window away and it gets its original size back |
+| ⌨️ **Keyboard shortcuts** | Rectangle's layout (Ctrl+Alt based), fully customisable; press Left/Right Half again to cycle ½ → ⅔ → ⅓ |
+| 📐 **Pixel-exact** | Edge-to-edge placement on any DPI / multi-monitor setup, including maximised and minimum-size windows |
+| 🖥 **Multi-monitor** | Move windows between displays with Ctrl+Alt+Win+Arrow (halves stay halves, maximised stays maximised) |
+| ⚙️ **Settings UI** | Visual settings window with live zone previews — English and Spanish |
+| 🔕 **Silent** | Runs in the system tray, no admin rights, no pop-up dialogs — just quiet notifications |
+| 🔄 **Autostart** | Optional launch at login, from the tray menu or Settings |
 
 ---
 
@@ -110,32 +112,41 @@ Open from the tray icon → **Settings**.
 Every snap position — halves, quarters, thirds, fourths, sixths, eighths, ninths, twelfths, sixteenths — is listed with:
 - A small diagram showing exactly what the position looks like
 - The current keyboard shortcut
-- Click the shortcut chip to reassign it
+- Click the chip and press the new combination (**Backspace** clears it, **Esc** cancels, ↺ restores the default).
+  Assigning a combination that another action uses moves it. A search box filters the list.
 
 ### Snap Areas tab
-- **Windows Snap** — disable AeroSnap so it doesn't conflict with SnapFlow's drag zones
-- **Snap windows by dragging** — toggle drag-to-snap on/off
-- **Zone grid** — 3×3 visual grid; each zone has a live diagram and a dropdown with every available action
+- **Windows Snap** — turn AeroSnap off so it doesn't conflict with SnapFlow (applies instantly)
+- **Snap windows by dragging** — toggle drag-to-snap on/off (also in the tray menu)
+- **Restore window size when unsnapped** — dragging a snapped window out restores its size
+- **Zone grid** — 3×3 visual grid; each zone has a live diagram and a dropdown with every action (or *None*)
 
 ### General tab
-Edge threshold, corner size, gap between windows, Almost Maximize size, resize step.
+Edge threshold, corner size, gap between windows, Almost Maximize size, resize step,
+½ → ⅔ → ⅓ cycling, preview opacity, launch at login.
 
 ### Language
-Toggle **EN / ES** in the top-right corner of the Settings window.
+Toggle **EN / ES** in the top-right corner of the Settings window (remembered; defaults to the Windows language).
+Press **Ctrl+S** to save.
 
 ---
 
 ## Tray menu
 
-Right-click the SnapFlow icon in the system tray:
+Click the SnapFlow tray icon to open Settings; right-click for the menu:
 
 | Item | Description |
 |---|---|
-| Settings | Opens the Settings window |
-| Start at login | Toggle autostart |
-| Disable Windows Snap | Turns off AeroSnap via registry (recommended) |
+| Settings | Opens the Settings window (or brings it to the front) |
+| Snap windows by dragging | Pause / resume drag snapping |
+| Launch at login | Toggle autostart |
+| Disable Windows Snap | Turns off AeroSnap immediately (recommended) |
 | Open config file | Opens `config.json` in your default editor |
+| Check for updates | Notifies you if a newer release exists |
 | Quit | Exits SnapFlow |
+
+If you hand-edit `config.json` and break it, SnapFlow starts with defaults and keeps your file as `config.json.bad`.
+Launching SnapFlow again while it is running just opens Settings.
 
 ---
 

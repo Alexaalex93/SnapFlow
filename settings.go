@@ -1,33 +1,62 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
-	"strings"
 	"sync/atomic"
-	"time"
+
+	"snapflow/w32ex"
 
 	"github.com/gonutz/w32/v2"
-	webview "github.com/jchv/go-webview2"
 )
 
-var settingsOpen atomic.Bool
+var (
+	settingsOpen atomic.Bool
+	settingsHWND atomic.Uintptr // window handle while the settings window is open
+)
 
+// openSettings opens the settings window, or brings it to the front if it
+// is already open (previously a second click silently did nothing).
 func openSettings() {
 	if !settingsOpen.CompareAndSwap(false, true) {
+		if h := w32.HWND(settingsHWND.Load()); h != 0 {
+			if w32ex.IsIconic(h) {
+				w32.ShowWindow(h, w32.SW_RESTORE)
+			}
+			w32.SetForegroundWindow(h)
+		}
 		return
 	}
 	go func() {
 		runtime.LockOSThread()
 		defer func() {
+			settingsHWND.Store(0)
 			settingsOpen.Store(false)
 			runtime.UnlockOSThread()
+			// Never leave global hotkeys unregistered if the window closed
+			// while a shortcut was being recorded.
+			postToMain(wmSuspendHotkeys, 0, 0)
 		}()
 		runSettingsWindow()
 	}()
+}
+
+// pendingCfg holds the newest config submitted from a non-main goroutine;
+// the main thread picks it up on wmApplyCfg. Unlike a 1-slot channel with a
+// non-blocking send, a newer submission can never be silently dropped.
+var pendingCfg atomic.Pointer[AppConfig]
+
+// submitConfig persists cfg and hands it to the main thread.
+func submitConfig(cfg *AppConfig) {
+	liveCfg.Store(cfg)
+	if appCfgStore != nil {
+		if err := appCfgStore.Save(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "settings save to disk: %v\n", err)
+		}
+	}
+	pendingCfg.Store(cfg)
+	postToMain(wmApplyCfg, 0, 0)
 }
 
 type ShortcutEntry struct {
@@ -37,6 +66,15 @@ type ShortcutEntry struct {
 	Mod     int    `json:"mod"`
 	VK      int    `json:"vk"`
 	Text    string `json:"text"`
+	DefMod  int    `json:"defMod"`
+	DefVK   int    `json:"defVk"`
+	DefText string `json:"defText"`
+}
+
+type ShortcutBinding struct {
+	Action int `json:"action"`
+	Mod    int `json:"mod"`
+	VK     int `json:"vk"`
 }
 
 type GeneralSettings struct {
@@ -47,6 +85,8 @@ type GeneralSettings struct {
 	AlmostMaxWidth  float64 `json:"almostMaxWidth"`
 	AlmostMaxHeight float64 `json:"almostMaxHeight"`
 	SizeStep        int     `json:"sizeStep"`
+	CycleHalves     bool    `json:"cycleHalves"`
+	PreviewOpacity  int     `json:"previewOpacity"` // percent
 }
 
 type SnapAreasSettings struct {
@@ -66,6 +106,8 @@ type SnapAreasSettings struct {
 type SavePayload struct {
 	General   GeneralSettings   `json:"general"`
 	SnapAreas SnapAreasSettings `json:"snapAreas"`
+	Shortcuts []ShortcutBinding `json:"shortcuts"`
+	Language  string            `json:"language"`
 }
 
 type sEntry struct {
@@ -183,212 +225,4 @@ func allShortcutEntries() []sEntry {
 		{ActionPreviousDisplay, "Previous Display", "Display", caw, 0x25},
 		{ActionRestore, "Restore", "Special", ca, 0x08},
 	}
-}
-
-func buildShortcutEntries() []ShortcutEntry {
-	out := make([]ShortcutEntry, 0)
-	for _, e := range allShortcutEntries() {
-		out = append(out, ShortcutEntry{
-			Action:  int(e.action),
-			Label:   e.label,
-			Section: e.section,
-			Mod:     e.mod,
-			VK:      e.vk,
-			Text:    shortcutChipText(e.mod, e.vk),
-		})
-	}
-	return out
-}
-
-func shortcutChipText(mod, vk int) string {
-	if mod == 0 && vk == 0 {
-		return ""
-	}
-	s := ""
-	if mod&MOD_CONTROL != 0 {
-		s += "Ctrl+"
-	}
-	if mod&MOD_ALT != 0 {
-		s += "Alt+"
-	}
-	if mod&MOD_SHIFT != 0 {
-		s += "Shift+"
-	}
-	if mod&MOD_WIN != 0 {
-		s += "Win+"
-	}
-	return s + keyName(vk)
-}
-
-func runSettingsWindow() {
-	w := webview.NewWithOptions(webview.WebViewOptions{Debug: false, Window: nil})
-	if w == nil {
-		result := w32.MessageBox(0,
-			"The Settings window requires Microsoft WebView2 Runtime,\n"+
-				"which is not available on this computer.\n\n"+
-				"You can still configure SnapFlow by editing the config file directly.\n\n"+
-				"Open config file now?",
-			appName+" — Settings",
-			w32.MB_ICONWARNING|w32.MB_YESNO)
-		if result == w32.IDYES {
-			if store := appCfgStore; store != nil {
-				w32.ShellExecute(0, "open", store.path, "", "", w32.SW_SHOWNORMAL)
-			}
-		}
-		return
-	}
-	defer w.Destroy()
-
-	w.SetTitle(appName + " — Settings")
-	w.SetSize(720, 640, webview.HintNone)
-
-	w.Bind("goSaveSettings", func(payload string) {
-		var p SavePayload
-		if err := json.Unmarshal([]byte(payload), &p); err != nil {
-			fmt.Fprintf(os.Stderr, "settings save: %v\n", err)
-			return
-		}
-
-		// Build a new config value — do NOT mutate appCfg directly here because
-		// this callback runs in the WebView goroutine while the main OS thread
-		// reads appCfg from WinEvent callbacks. We post the new config through
-		// cfgUpdateCh so the main thread applies it safely via wmApplyCfg.
-		g := p.General
-		newCfg := *appCfg // shallow copy of current values
-		newCfg.EdgeThresholdPx = g.EdgeThreshold
-		newCfg.CornerSnapAreaSize = g.CornerSize
-		newCfg.ShortEdgeSnapAreaSize = g.ShortEdgeSize
-		newCfg.GapSize = g.GapSize
-		newCfg.AlmostMaximizeWidth = g.AlmostMaxWidth / 100.0
-		newCfg.AlmostMaximizeHeight = g.AlmostMaxHeight / 100.0
-		newCfg.SizeOffset = g.SizeStep
-
-		sa := p.SnapAreas
-		newCfg.SnapByDragging = sa.SnapByDragging
-		newCfg.RestoreSize = sa.RestoreSize
-		newCfg.AnimateFootprint = sa.AnimateFootprint
-		newCfg.ZoneTopLeft = sa.TopLeft
-		newCfg.ZoneTop = sa.Top
-		newCfg.ZoneTopRight = sa.TopRight
-		newCfg.ZoneLeft = sa.Left
-		newCfg.ZoneRight = sa.Right
-		newCfg.ZoneBottomLeft = sa.BottomLeft
-		newCfg.ZoneBottom = sa.Bottom
-		newCfg.ZoneBottomRight = sa.BottomRight
-
-		if appCfgStore != nil {
-			if err := appCfgStore.Save(&newCfg); err != nil {
-				fmt.Fprintf(os.Stderr, "settings save to disk: %v\n", err)
-			}
-		}
-
-		// Deliver to main thread (non-blocking: drop if channel already full,
-		// meaning a previous save hasn't been consumed yet — the next will win).
-		select {
-		case cfgUpdateCh <- &newCfg:
-		default:
-		}
-		postToMain(wmApplyCfg, 0, 0)
-
-		// w.Eval() cannot be called from inside a w.Bind() callback —
-		// it tries to dispatch back to the WebView thread that is currently
-		// waiting for this callback to return, causing a deadlock.
-		// Run on a separate goroutine so the callback returns first.
-		go func() {
-			time.Sleep(30 * time.Millisecond) // let the callback return
-			w.Eval("window.showSaved()")
-			time.Sleep(600 * time.Millisecond) // show "Saved ✓" briefly
-			w.Terminate()                      // close the window
-		}()
-	})
-
-	w.Bind("goOpenConfigFile", func() {
-		if appCfgStore != nil {
-			postToMain(wmOpenConfig, 0, 0)
-		}
-	})
-
-	w.Bind("goSetWindowsSnap", func(enabled bool) {
-		if enabled {
-			_ = EnableWindowsSnap()
-		} else {
-			_ = DisableWindowsSnap()
-		}
-	})
-
-	// goCheckUpdates queries GitHub and returns a result string:
-	//   "uptodate"        — already on latest version
-	//   "new:1.2.3"       — newer version available
-	//   "error: <msg>"    — network or API error
-	w.Bind("goCheckUpdates", func() string {
-		latest, err := fetchLatestVersion()
-		if err != nil {
-			return "error: " + err.Error()
-		}
-		current := strings.TrimPrefix(appVersion, "v")
-		latestClean := strings.TrimPrefix(latest, "v")
-		if isNewerVersion(latestClean, current) {
-			return "new:" + latestClean
-		}
-		return "uptodate"
-	})
-
-	w.Bind("goOpenRepo", func() {
-		w32.ShellExecute(0, "open", releasesURL, "", "", w32.SW_SHOWNORMAL)
-	})
-
-	w.Bind("goSetAutorun", func(enabled bool) {
-		if enabled {
-			AutoRunEnable()
-		} else {
-			AutoRunDisable()
-		}
-	})
-
-	autorun, _ := AutoRunEnabled()
-	autorunJSON, _ := json.Marshal(autorun)
-	winSnap, _ := json.Marshal(WindowsSnapEnabled())
-	shortcuts, _ := json.Marshal(buildShortcutEntries())
-	general, _ := json.Marshal(GeneralSettings{
-		EdgeThreshold:   appCfg.EdgeThresholdPx,
-		CornerSize:      appCfg.CornerSnapAreaSize,
-		ShortEdgeSize:   appCfg.ShortEdgeSnapAreaSize,
-		GapSize:         appCfg.GapSize,
-		AlmostMaxWidth:  appCfg.AlmostMaximizeWidth * 100,
-		AlmostMaxHeight: appCfg.AlmostMaximizeHeight * 100,
-		SizeStep:        appCfg.SizeOffset,
-	})
-	snapAreas, _ := json.Marshal(SnapAreasSettings{
-		SnapByDragging:   appCfg.SnapByDragging,
-		RestoreSize:      appCfg.RestoreSize,
-		AnimateFootprint: appCfg.AnimateFootprint,
-		TopLeft:          appCfg.ZoneTopLeft,
-		Top:              appCfg.ZoneTop,
-		TopRight:         appCfg.ZoneTopRight,
-		Left:             appCfg.ZoneLeft,
-		Right:            appCfg.ZoneRight,
-		BottomLeft:       appCfg.ZoneBottomLeft,
-		Bottom:           appCfg.ZoneBottom,
-		BottomRight:      appCfg.ZoneBottomRight,
-	})
-	version, _ := json.Marshal(appVersion)
-	w.Init(fmt.Sprintf(`
-		window._shortcuts = %s;
-		window._general   = %s;
-		window._snapAreas = %s;
-		window._winSnap   = %s;
-		window._version   = %s;
-		window._autorun   = %s;
-	`, string(shortcuts), string(general), string(snapAreas), string(winSnap), string(version), string(autorunJSON)))
-
-	tmpPath := filepath.Join(os.TempDir(), "snapflow_settings.html")
-	if err := os.WriteFile(tmpPath, []byte(settingsHTML), 0644); err != nil {
-		fmt.Printf("settings html write: %v\n", err)
-		return
-	}
-	defer os.Remove(tmpPath)
-
-	fileURL := "file:///" + strings.ReplaceAll(tmpPath, "\\", "/")
-	w.Navigate(fileURL)
-	w.Run()
 }

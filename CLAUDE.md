@@ -9,25 +9,29 @@ and repositions windows into predefined snap positions (halves, thirds, quarters
 ## Architecture overview
 
 ```
-main.go          entry-point, startup, hotkey registration, Win32 message loop
-config.go        AppConfig struct, JSON persistence (~/.config/SnapFlow/config.json)
-actions.go       WindowAction enum + Calculate() — pure geometry, no Win32 calls
-snapzones.go     SnapZonesForWork() — maps screen edges/corners to WindowActions
-gesture.go       GestureInterpreter — drag tracking, compound-thirds logic
-drag.go          DragManager — WinEvent hooks, calls gesture + overlay + window
-overlay.go       OverlayRenderer — semi-transparent blue snap-preview window
-window.go        applyResize / resizeToRect + isZonableWindow filter
-hotkey.go        RegisterHotKey wrapper, Win32 message loop (msgLoop)
-conflict.go      Shortcut-conflict dialog + GPU settings helper
-history.go       WindowHistory — stores pre-snap rect for ActionRestore
-autorun.go       Windows Run registry key enable/disable
-winsnap.go       Windows AeroSnap registry disable/enable
-tray.go          System tray icon + context menu
-settings.go      Settings window (WebView2): data types, Go←→JS bindings
-settings_html.go settingsHTML const — full HTML/CSS/JS for the settings UI
-generate.go      //go:generate goversioninfo — embeds icon + version into .exe
-monitor.go       EnumMonitors helper
-w32ex/           Thin wrappers for Win32 functions missing from gonutz/w32
+main.go            entry-point, startup/shutdown, executeAction (hotkey dispatch, ½→⅔→⅓ cycling)
+config.go          AppConfig, JSON persistence (atomic save, migration, broken-file recovery)
+actions.go         WindowAction enum + Calculate() — pure geometry, no Win32 calls
+snapzones.go       SnapZonesForWork() — maps screen edges/corners to WindowActions
+gesture.go         GestureInterpreter — zone lookup + reversible compound thirds
+drag.go            DragManager — WinEvent hooks, move-vs-resize detection, unsnap-restore
+overlay.go         OverlayRenderer — animated per-pixel-alpha snap preview (own thread)
+window.go          resizeToRect / placeFrame (pixel-exact placement), multi-monitor, window filter
+history.go         WindowHistory — restore rect, last snapped rect, cycle state
+hotkey.go          configurable hotkeys (register/re-register), main message loop, applyConfig
+conflict.go        hotkey-conflict + elevated-window notifications (tray balloons)
+tray.go            tray icon/menu, notifications, TaskbarCreated re-registration
+i18n.go            EN/ES strings for native UI (tray, notifications)
+autorun.go         HKCU Run key (quoted os.Executable path)
+winsnap.go         Windows Snap on/off via SPI_SETWINARRANGING (applies instantly)
+update.go          GitHub release check (notification, never a modal dialog)
+settings.go        settings data types, openSettings (single instance + focus), submitConfig
+settings_window.go WebView2 window: bindings, JSON injection, shortcut overrides
+settings_html.go   settingsHTML const — full HTML/CSS/JS for the settings UI
+monitor.go         Monitors() / monitorWork() — leak-free EnumDisplayMonitors
+win32.go           shared raw user32/gdi32 procs + WNDCLASSEXW
+generate.go        //go:generate goversioninfo — embeds icon + version into .exe
+w32ex/             Win32 wrappers missing from gonutz/w32 (cached procs, shared WinEvent callback)
 ```
 
 ---
@@ -36,222 +40,142 @@ w32ex/           Thin wrappers for Win32 functions missing from gonutz/w32
 
 ### Keyboard shortcut → snap
 ```
-WM_HOTKEY (main thread msgLoop)
-  → HotKey.callback()
-  → makeActionCallback(action)
-  → executeAction(hwnd, action)
-  → action.Calculate(work, cur, cfg)   [pure geometry]
-  → resizeToRect(hwnd, target)          [Win32 SetWindowPos]
+WM_HOTKEY (main thread msgLoop, hwnd=0)
+  → runAction(action) → executeAction(foregroundHwnd, action)
+      frameRect(hwnd)                      [visible frame, not GetWindowRect]
+      halfCycles: repeated Left/Right Half → ½, ⅔, ⅓ (WindowHistory.NextCycle)
+      action.Calculate(work, frame, cfg)   [pure geometry]
+      resizeToRect(hwnd, target)           [placeFrame + delayed verification]
+      windowHistory.RecordSnap(before, got)
 ```
 
 ### Drag → snap
 ```
-WinEvent EVENT_SYSTEM_MOVESIZESTART  (main thread, WINEVENT_OUTOFCONTEXT)
-  → DragManager.onMoveStart(hwnd)
-      isZonableWindow(hwnd)            [filter: skip system windows]
-      GestureInterpreter.Begin(hwnd, work)
-
-WinEvent EVENT_OBJECT_LOCATIONCHANGE  (main thread, per mouse-move)
-  → DragManager.onLocationChange(hwnd)
-      GestureInterpreter.Update(cursor, work)
-        ActionForCursor(cursor, zones) → WindowAction
-        bottomThirdsAction() if in bottom edge
-      action.Calculate(work, preSnap, cfg) → target RECT
-      OverlayRenderer.Show(target)     [blue preview]
-
-WinEvent EVENT_SYSTEM_MOVESIZEEND    (main thread)
-  → DragManager.onMoveEnd(hwnd)
-      GestureInterpreter.CurrentAction()
-      GestureInterpreter.End()
-      windowHistory.Save(hwnd, current)
-      resizeToRect(hwnd, target)
+EVENT_SYSTEM_MOVESIZESTART (global hook, main thread)
+  → onMoveStart: isZonableWindow, WM_NCHITTEST (ignore border *resizes*),
+    unsnap-restore (RestoreSize), install per-process LOCATIONCHANGE hook,
+    GestureInterpreter.Begin
+EVENT_OBJECT_LOCATIONCHANGE (hook scoped to the dragged window's process)
+  → onLocationChange: 4px dead zone, gest.Update(cursor) → overlay.Show/Hide
+EVENT_SYSTEM_MOVESIZEEND
+  → onMoveEnd: final gest.Update at release point, Esc-cancel detection,
+    resizeToRect / maximize, RecordSnap, THEN overlay.Hide (fades over the
+    placed window), unhook LOCATIONCHANGE
 ```
 
 ### Settings save → live config update
 ```
-WebView2 goroutine (goSaveSettings JS binding)
-  → JSON unmarshal into SavePayload
-  → update appCfg fields
-  → appCfgStore.Save(appCfg)
-  → dragMgr.gest.UpdateConfig(appCfg)   [RWMutex protected]
+WebView2 goroutine (goSaveSettings)
+  → newCfg := liveCfg.Load().clone() + payload  (never mutates the live config)
+  → submitConfig: liveCfg.Store, atomic save, pendingCfg.Store, post wmApplyCfg
+main thread msgLoop (wmApplyCfg)
+  → applyConfig: appCfg = newCfg, gesture.UpdateConfig, overlay.Configure,
+    re-register hotkeys if they changed (conflicts → notification)
 ```
 
 ---
 
 ## Key files in detail
 
-### `actions.go`
+### `window.go` — placement engine
 
-Contains the `WindowAction` enum (integer values compatible with Rectangle's Swift enum),
-and `(a WindowAction).Calculate(work, cur w32.RECT, cfg *AppConfig) w32.RECT`.
+All geometry is in **visible-frame** coordinates (`DwmGetWindowAttribute(EXTENDED_FRAME_BOUNDS)`,
+falling back to `GetWindowRect`). The process is **Per-Monitor-V2 DPI aware**, so frame
+bounds, window rects and work areas are all physical pixels — **never rescale them**
+(the old `scaleRect(GetDpiForWindow/GetDeviceCaps)` broke DPI-unaware apps and mixed-DPI setups).
 
-`Calculate` is **pure geometry** — no Win32 calls, no side effects. Takes:
-- `work` — monitor work area (excludes taskbar)
-- `cur` — current window frame rect (DWM extended frame bounds, not `GetWindowRect`)
-- `cfg` — gap size, AlmostMaximize percentages, resize step sizes
+`placeFrame(hwnd, target, work)`:
+1. `SW_RESTORE` if maximised/minimised (border metrics differ in those states)
+2. `extendFlushEdges`: edges flush with the work area go 1px outward (hides the Win11 1px accent border)
+3. position with the current invisible-border insets
+4. second pass if the result differs (DPI change after a cross-monitor move)
+5. min-size apps: `reanchor` keeps an oversized window hugging the intended edge and inside the work area
 
-Helper functions:
-- `colRect(work, col, totalCols)` — horizontal grid column bounds
-- `rowRect(work, row, totalRows)` — vertical grid row bounds
-- `gridCell(work, col, row, totalCols, totalRows)` — grid cell rect
-- `applyGaps(r, edges, halfGap)` — shrinks a rect by gap/2 on specified edges
-- `clampToWork(r, work)` — translates/shrinks r to fit inside work area
-
-**Known limitation**: `ActionMaximize` returns `work` from `Calculate` (for overlay preview only);
-the actual maximize uses `SW_MAXIMIZE` in `maximize()`.
-
-### `snapzones.go`
-
-`SnapZonesForWork(work, cfg)` returns `[]SnapZone` — a list of `{Region w32.RECT, Action WindowAction}`.
-
-The zones cover screen edges and corners. Layout:
-```
-[TL corner][────── Top edge (Maximize) ──────][TR corner]
-[Left edge top]                          [Right edge top]
-[Left edge mid (LeftHalf)]               [Right edge mid (RightHalf)]
-[Left edge bot]                          [Right edge bot]
-[BL corner][── Bottom edge (compound thirds) ─][BR corner]
-```
-
-Zone assignments are configurable per-zone in `AppConfig.Zone*` fields.
-The `"compoundThirds"` zone value maps to `ActionBottomHalf` internally —
-the gesture engine then activates the bottom-thirds tracker on that action.
-
-### `gesture.go`
-
-`GestureInterpreter` holds the drag state for one active drag.
-
-**Compound-thirds logic** (`bottomThirdsAction`):
-When the cursor is in the bottom edge zone, `xMin`/`xMax` track the horizontal
-extent of the cursor path. The action is derived from which thirds were covered:
-```
-xMin..xMax covers [first third only]          → FirstThird
-xMin..xMax covers [center third only]         → CenterThird
-xMin..xMax covers [last third only]           → LastThird
-xMin..xMax covers [first + center]            → FirstTwoThirds
-xMin..xMax covers [center + last]             → LastTwoThirds
-xMin..xMax covers [all three]                 → Maximize
-```
-
-**Threading**: `GestureInterpreter` is called from the WinEvent callback (main OS thread)
-for `Begin`/`Update`/`End`/`CurrentAction`, and from the WebView goroutine for `UpdateConfig`.
-A `sync.RWMutex` (`cfgMu`) protects the `cfg` pointer.
+`resizeToRect` additionally schedules a verification 150ms later (per-window generation
+counter, skipped while dragging) for apps that re-apply their own bounds.
+`SetWindowPos` returning ERROR_ACCESS_DENIED = elevated target → one notification per session.
 
 ### `drag.go`
 
-`DragManager` installs three `SetWinEventHook` hooks and translates them into
-`GestureInterpreter` calls + `OverlayRenderer` calls + `resizeToRect` calls.
+- **Move vs resize**: MOVESIZESTART fires for both. `WM_NCHITTEST` (via `SendMessageTimeout`,
+  60ms, abort-if-hung) on the cursor; HTLEFT..HTBOTTOMRIGHT / HTBORDER → ignored.
+- **Clicks aren't drags**: a 4px dead zone; clicking a title bar that sits on a snap edge no longer snaps.
+- **Esc cancel**: if the frame at release equals the start frame after moving → no snap.
+- **Unsnap-restore**: a window still at its snapped rect gets its original size back when a drag
+  starts (cursor kept at the same relative title-bar position); fallback at drop if the app's move loop overrode it.
+- The LOCATIONCHANGE hook is installed per drag and scoped to the window's process (a global one fires constantly for carets/progress bars).
 
-**Important invariant**: `d.active` is only set to `true` inside the mutex in
-`onMoveStart`, and only if `GetWindowRect` succeeds. This guarantees `d.preSnap`
-is always valid when `onMoveEnd` uses it.
+### `gesture.go`
 
-**Throttling**: `onLocationChange` debounces overlay hide calls by 80ms to avoid
-flickering when the cursor briefly leaves a snap zone.
+Zone lookup via `ActionForCursor`. The bottom edge with `"compoundThirds"` yields the internal
+marker `actionCompoundThirds` (-2), resolved as a span from the **anchor third** (where the
+cursor entered the bottom zone) to the current third — reversible:
+```
+single third → First/Center/Last Third
+first+center → First Two Thirds     center+last → Last Two Thirds     all → Maximize
+```
+A plain `"bottomHalf"` setting is a real Bottom Half; `"none"` disables a zone.
 
 ### `overlay.go`
 
-The overlay is a `WS_POPUP | WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TRANSPARENT` window.
-Alpha fades in/out via `SetLayeredWindowAttributes(LWA_ALPHA)` in an animation goroutine
-running at ~70 fps.
-
-**Painting**: `WM_ERASEBKGND` returns 1 (suppress default). `WM_PAINT` paints the
-solid blue (`#2563EB`) fill using the HDC from `BeginPaint`. `InvalidateRect` +
-`UpdateWindow` are called immediately after `SetWindowPos` to force a repaint before
-the fade-in starts (prevents the black-flash on first show with DWM composition).
-
-**Corner radius**: Applied via `SetWindowRgn(CreateRoundRectRgn(...))`.
-
-### `window.go`
-
-`isZonableWindow(hwnd)` — the main window filter. A window is zonal if:
-1. It is the root window (`GetAncestor(GA_ROOT) == hwnd`)
-2. It is visible
-3. It is not the desktop or shell window
-4. Its class name is not in `isSystemClassName`
-5. It is not `WS_CHILD` or `WS_DISABLED`
-6. It is not `WS_EX_TOOLWINDOW` (except `ApplicationFrameWindow` — UWP host)
-7. It is not a `WS_POPUP` without `WS_CAPTION`
-
-`applyResize(hwnd, f)` — the resize engine:
-1. Gets the DWM extended frame bounds (`DwmGetWindowAttributeEXTENDED_FRAME_BOUNDS`)
-   which excludes the invisible Win10/11 shadow border
-2. Computes the invisible-border delta between `GetWindowRect` and frame bounds
-3. Calls `f(work, frameBounds)` to get the target frame rect
-4. Adds back the border offsets before calling `SetWindowPos`
-
-This correctly handles the invisible 7–8 px shadow border on Windows 10/11.
+Own locked OS thread with its own window + message pump (idle in `GetMessage`, woken by
+`PostThreadMessage`). Rendering: `UpdateLayeredWindow` with a reusable top-down 32bpp DIB,
+anti-aliased rounded rect via SDF (only corner bands per-pixel; row middles are memmove fills —
+~1ms for 1440p). Animations (ease-out cubic, DwmFlush-paced): appear = fade + 94%→100% zoom,
+retarget = glide, hide = fade. Colour = Windows accent (`HKCU\Software\Microsoft\Windows\DWM\AccentColor`),
+fill opacity = `FootprintAlpha`, `AnimateFootprint=false` → instant.
 
 ### `history.go`
 
-`WindowHistory` is a `map[w32.HWND]w32.RECT` protected by a `sync.Mutex`.
-`Save` stores the current rect before a snap. `Pop` retrieves and deletes it.
-Used by `ActionRestore` to undo the last snap.
+Per window: `restore` (free-floating frame before the first snap), `snapped` (frame SnapFlow
+last applied), cycle state. Snapping an already-snapped window keeps the original restore rect.
+Entries for dead HWNDs are pruned once the map exceeds 128.
 
-**Note**: The map grows unboundedly. Closed windows stay in the map until the
-corresponding HWND is reused (very rare in practice, but worth noting).
+### `hotkey.go` / shortcuts
 
-### `config.go`
+Defaults live in `allShortcutEntries()` (settings.go). `AppConfig.Shortcuts` stores only
+overrides (`"<action>": {mod, vk}`, `{0,0}` = disabled). `registerHotKeys(cfg)` unregisters
+everything and re-registers (ids = 1000+action, `MOD_NOREPEAT`). While the settings page records a
+shortcut it posts `wmSuspendHotkeys` so the keys reach the page.
 
-`AppConfig` fields:
+### `settings*.go` + `settings_html.go`
 
-| Field | Default | Description |
-|---|---|---|
-| `EdgeThresholdPx` | 46 | Pixels from edge to activate snap zone |
-| `CornerSnapAreaSize` | 20 | Corner hot-zone square size (px) |
-| `ShortEdgeSnapAreaSize` | 145 | Upper/lower band height on left/right edges |
-| `GapSize` | 0 | Gap between snapped windows (px) |
-| `AlmostMaximizeWidth` | 0.9 | Almost-maximize width as fraction of monitor |
-| `AlmostMaximizeHeight` | 0.9 | Almost-maximize height as fraction of monitor |
-| `SizeOffset` | 30 | Step size for Larger/Smaller/LargerHeight/SmallerHeight |
-| `WidthStepSize` | 30 | Step size for LargerWidth/SmallerWidth |
-| `FootprintAlpha` | 0.3 | Persisted but currently unused (overlay alpha is hardcoded) |
-| `ShortcutSet` | "rectangle" | Persisted but currently unused |
-| `SnapByDragging` | true | Enable drag-to-snap |
-| `RestoreSize` | false | Restore window size when unsnapping (not yet implemented) |
-| `AnimateFootprint` | true | Animate the snap preview overlay |
-| `Zone*` | various | Per-zone action names (see `zoneNameToAction` in snapzones.go) |
-
-Config is stored at `%AppData%\SnapFlow\config.json`.
-`fillDefaults` backfills any zero/empty values from `defaultConfig()` on load.
-
-### `settings.go` + `settings_html.go`
-
-The settings window uses **WebView2** (Edge-based embedded browser) via `go-webview2`.
-The HTML/CSS/JS lives entirely in `settingsHTML` const in `settings_html.go`.
-
-Go→JS communication:
-- `w.Init(...)` — injects `window._shortcuts`, `window._general`, `window._snapAreas`, `window._winSnap` before page load
-- `w.Bind(name, fn)` — exposes Go functions callable from JS: `goSaveSettings`, `goOpenConfigFile`, `goSetWindowsSnap`
-- `w.Eval(js)` — called after save to trigger `window.showSaved()`
-
-The HTML is written to a temp file (`%TEMP%\snapflow_settings.html`) and navigated to via
-`file://` because WebView2 blocks `data:` URLs by default.
-
-The settings window is **single-instance** (guarded by `settingsOpen atomic.Bool`).
+WebView2 via `go-webview2`, data dir `%AppData%\SnapFlow\WebView2`, size scaled by monitor DPI,
+centered; a second open focuses the existing window. Injected globals: `_shortcuts`
+(with defaults), `_general`, `_snapAreas`, `_winSnap`, `_version`, `_autorun`, `_lang`.
+Bindings: `goSaveSettings`, `goSetLanguage`, `goSuspendHotkeys`, `goShortcutText`, `goClose`,
+`goOpenConfigFile`, `goSetWindowsSnap`, `goSetAutorun`, `goCheckUpdates`, `goOpenRepo`.
+**Never call `w.Eval`/`w.Terminate` inside a Bind callback** — use `w.Dispatch` from a goroutine.
+The General tab is rebuilt on language change; `readGeneral()` preserves unsaved edits.
 
 ---
 
 ## Threading model
 
-SnapFlow uses two OS threads and several goroutines:
-
 | Thread/Goroutine | What runs there |
 |---|---|
-| Main OS thread (locked) | Win32 message loop, WM_HOTKEY, WinEvent callbacks, tray messages, overlay WndProc |
-| WebView goroutine | Settings window (WebView2 runs its own message pump in `w.Run()`) |
-| Overlay animation goroutine | `OverlayRenderer.animLoop()` — reads cmdCh, calls SetLayeredWindowAttributes |
-| Signal goroutine | os/signal watcher for Ctrl-C |
+| Main OS thread (locked) | msgLoop, WM_HOTKEY, WinEvent callbacks, tray window, applyConfig. Sole owner of `appCfg`. |
+| Overlay thread (locked) | overlay window, its message pump, animation + rendering |
+| WebView goroutine (locked) | settings window (`w.Run()`) |
+| Short goroutines | placement verification, update check |
 
-**WinEvent hooks** are installed with `WINEVENT_OUTOFCONTEXT`, meaning callbacks fire
-on the thread that called `SetWinEventHook` — which is the main thread. All drag callbacks
-therefore run on the main OS thread, same as the message loop.
+Cross-thread config access uses `liveCfg atomic.Pointer[AppConfig]` (read anywhere) and
+`pendingCfg` (handoff to the main thread). `GestureInterpreter.cfg` has its own RWMutex.
+Tray state (`trayNID`, balloon action) is mutex-guarded; notifications can come from any goroutine.
 
-**`GestureInterpreter.UpdateConfig`** is the only cross-goroutine write (WebView → main).
-It is protected by `cfgMu sync.RWMutex`.
+**Syscall callbacks**: Go can only create a limited number and never frees them. WinEvent hooks share
+one native callback (dispatch map in `w32ex`), `EnumDisplayMonitors` uses one shared callback.
+Never call `syscall.NewCallback` per operation.
 
-**`OverlayRenderer`** uses a buffered channel (`cmdCh`) to pass commands from any goroutine
-to the animation loop goroutine.
+---
+
+## Testing
+
+```powershell
+go test ./...                                   # pure logic (CI)
+$env:SNAPFLOW_GUI_TESTS=1; go test -run GUI -v . # real windows: pixel-exact placement, overlay
+```
+`window_gui_test.go` briefly shows a window and the overlay; skipped unless the env var is set.
 
 ---
 
@@ -259,40 +183,16 @@ to the animation loop goroutine.
 
 ### Local build
 ```powershell
-# Install tools (once)
-go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
-
-# Regenerate icon (if changed)
-.\scripts\make-icon.ps1
-
-# Embed icon + version info into .exe
+go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest   # once
+.\scripts\make-icon.ps1     # Windows PowerShell 5.1 (System.Drawing)
 go generate
-
-# Build
-go build -ldflags "-H=windowsgui -s -w" -o snapflow.exe .
-```
-
-### Full release build (exe + installer)
-```powershell
-.\scripts\build-release.ps1 -Version 1.2.3
-# Output: dist\snapflow.exe, dist\SnapFlow-1.2.3-Setup.exe
+go build -ldflags "-H=windowsgui -s -w -X main.appVersion=1.2.3" -o snapflow.exe .
 ```
 
 ### CI/CD (GitHub Actions)
-- **`ci.yml`**: runs on every push. Lint (gofmt, go mod tidy, go vet) on Ubuntu; build + test on Windows.
-- **`release.yml`**: runs on every push to `main` and on `v*` tags.
-  - Regenerates icon (Windows PowerShell 5.1, needed for System.Drawing)
-  - Installs goversioninfo, patches versioninfo.json, runs `go generate`
-  - Builds exe, builds installer (Inno Setup via Chocolatey)
-  - On `main` push: updates rolling "latest" pre-release
-  - On `v*` tag: creates proper versioned release
-
-### `go generate`
-`generate.go` contains `//go:generate goversioninfo -64=true -o resource.syso`.
-`goversioninfo` reads `versioninfo.json` and `assets/icon.ico` to produce
-`resource.syso`, which is automatically linked by `go build` to embed:
-- Application icon (shown in Explorer, taskbar, Alt-Tab)
-- PE version info (shown in Properties dialog)
+- **`ci.yml`**: lint (gofmt, go mod tidy, `GOOS=windows go vet`) on Ubuntu; build + test on Windows.
+- **`release.yml`**: every push to `main` → version `MAJOR.MINOR` (from `VERSION`) `.` commit count,
+  builds exe + Inno Setup installer, publishes release `vX.Y.Z`.
 
 ---
 
@@ -300,34 +200,26 @@ go build -ldflags "-H=windowsgui -s -w" -o snapflow.exe .
 
 | Issue | File | Severity |
 |---|---|---|
-| `WindowHistory` grows unboundedly (closed windows never evicted) | history.go | Minor |
-| `FootprintAlpha` config field is persisted but never read (overlay alpha hardcoded at 165/255) | config.go, overlay.go | Minor |
+| Windows of elevated apps can't be moved (UIPI) unless SnapFlow runs elevated — user is notified once | window.go | By design |
+| Shortcut/zone labels in the settings list are English-only | settings.go | Minor |
 | `ShortcutSet` config field is persisted but never read | config.go | Minor |
-| `RestoreSize` config field is read by settings UI but the undo-on-unsnap feature is not implemented | config.go | Minor |
-| `DisplayName()` on `WindowAction` is defined but never called | actions.go | Minor (dead code) |
-| `AnimateFootprint` config is persisted and shown in UI but the overlay animation is not conditionally disabled | config.go | Minor |
-| Hotkeys are hardcoded in `registerAllHotKeys()`; the settings UI shows them and allows editing, but changes are not persisted back to RegisterHotKey calls | settings.go, main.go | Major |
+| `DisplayName()` on `WindowAction` is unused | actions.go | Minor (dead code) |
 
 ---
 
 ## Adding a new snap action
 
-1. Add a constant to `actions.go` `const` block (use the next free integer)
-2. Add a `case` to `(a WindowAction).Calculate()` returning the target `w32.RECT`
-3. Add to `IsDragSnappable()` exclusion list if it should not be drag-triggerable
-4. Add an entry to `DisplayName()` map
-5. Add to `allShortcutEntries()` in `settings.go` (with section name and default hotkey)
-6. Add the diagram coordinates to the `ACT` map in `settingsHTML` (JS)
-7. If zone-configurable, add the string key to `zoneNameToAction` in `snapzones.go`
-   and to `ALL_ZONE_OPTS` in `settingsHTML`
-
----
+1. Add a constant to `actions.go` (next free integer)
+2. Add a `case` to `Calculate()`; if it depends on the current frame, add it to `UsesCurrentRect()`
+3. Add to `IsDragSnappable()` exclusions if it must not be drag-triggered
+4. Add to `allShortcutEntries()` in `settings.go` (section + default hotkey or `0, 0`)
+5. Add diagram coords to `ACT` in `settingsHTML`
+6. If zone-configurable: `zoneNameToAction` (snapzones.go) + `ALL_ZONE_OPTS` (settingsHTML)
 
 ## Adding a new settings field
 
-1. Add field to `AppConfig` in `config.go`
-2. Set default in `defaultConfig()`
-3. Add backfill in `fillDefaults()`
-4. If exposed in UI: add to `GeneralSettings` or `SnapAreasSettings` struct in `settings.go`,
-   read it in `runSettingsWindow` JSON inject, write it in `goSaveSettings` handler
-5. Add a key to both `LANGS.en` and `LANGS.es` in `settingsHTML`
+1. Field in `AppConfig`, default in `defaultConfig()`, validation in `fillDefaults()`
+   (bump `configVersion` + `migrate()` if old files need a different value)
+2. UI: add to `GeneralSettings`/`SnapAreasSettings`, inject in `runSettingsWindow`, apply in `goSaveSettings`
+3. JS: `buildGeneral`/`readGeneral`/`save`/`resetDefaults`, keys in both `LANGS.en` and `LANGS.es`
+4. If the native side reacts live, handle it in `applyConfig` (hotkey.go)

@@ -27,12 +27,13 @@ type SnapZone struct {
 //   - Bottom edge → Bottom Half
 //
 // zoneNameToAction maps config zone name strings to WindowAction constants.
-// "compoundThirds" is a UI alias for ActionBottomHalf: when the bottom zone
-// uses this value the gesture engine activates the compound-thirds tracker,
-// snapping to the 1/3, 2/3 or full-width column the cursor sweeps through.
+// "compoundThirds" maps to the internal actionCompoundThirds marker: the
+// gesture engine resolves it into the 1/3, 2/3 or full-width column the
+// cursor sweeps through. (It used to alias ActionBottomHalf, which made a
+// plain "Bottom Half" setting behave as thirds too.)
 var zoneNameToAction = map[string]WindowAction{
 	// Special / UI aliases
-	"none": ActionNone, "compoundThirds": ActionBottomHalf,
+	"none": ActionNone, "compoundThirds": actionCompoundThirds,
 	// Halves
 	"leftHalf": ActionLeftHalf, "rightHalf": ActionRightHalf,
 	"topHalf": ActionTopHalf, "bottomHalf": ActionBottomHalf,
@@ -65,11 +66,13 @@ var zoneNameToAction = map[string]WindowAction{
 	"center": ActionCenter, "centerProminently": ActionCenterProminently,
 }
 
-func zoneAction(name string) WindowAction {
+// zoneAction resolves a configured zone name. "none" disables the zone;
+// an unknown/empty name falls back to def.
+func zoneAction(name string, def WindowAction) WindowAction {
 	if a, ok := zoneNameToAction[name]; ok {
 		return a
 	}
-	return ActionNone
+	return def
 }
 
 func SnapZonesForWork(work w32.RECT, cfg *AppConfig) []SnapZone {
@@ -178,14 +181,14 @@ func SnapZonesForWork(work w32.RECT, cfg *AppConfig) []SnapZone {
 	midH := leftEdgeMid.Height()
 
 	// Read per-zone actions from config (with fallback to defaults).
-	aTopLeft := firstNonNone(zoneAction(cfg.ZoneTopLeft), ActionTopLeft)
-	aTop := firstNonNone(zoneAction(cfg.ZoneTop), ActionMaximize)
-	aTopRight := firstNonNone(zoneAction(cfg.ZoneTopRight), ActionTopRight)
-	aLeft := firstNonNone(zoneAction(cfg.ZoneLeft), ActionLeftHalf)
-	aRight := firstNonNone(zoneAction(cfg.ZoneRight), ActionRightHalf)
-	aBottomLeft := firstNonNone(zoneAction(cfg.ZoneBottomLeft), ActionBottomLeft)
-	aBottom := firstNonNone(zoneAction(cfg.ZoneBottom), ActionBottomHalf)
-	aBottomRight := firstNonNone(zoneAction(cfg.ZoneBottomRight), ActionBottomRight)
+	aTopLeft := zoneAction(cfg.ZoneTopLeft, ActionTopLeft)
+	aTop := zoneAction(cfg.ZoneTop, ActionMaximize)
+	aTopRight := zoneAction(cfg.ZoneTopRight, ActionTopRight)
+	aLeft := zoneAction(cfg.ZoneLeft, ActionLeftHalf)
+	aRight := zoneAction(cfg.ZoneRight, ActionRightHalf)
+	aBottomLeft := zoneAction(cfg.ZoneBottomLeft, ActionBottomLeft)
+	aBottom := zoneAction(cfg.ZoneBottom, actionCompoundThirds)
+	aBottomRight := zoneAction(cfg.ZoneBottomRight, ActionBottomRight)
 
 	zones := []SnapZone{}
 
@@ -211,14 +214,15 @@ func SnapZonesForWork(work w32.RECT, cfg *AppConfig) []SnapZone {
 	// Left edge: compound if action is leftHalf — show TopLeft/LeftHalf/BottomLeft.
 	if aLeft != ActionNone {
 		if midH > 0 && aLeft == ActionLeftHalf {
+			// If a corner is disabled its edge segment just extends the half.
 			zones = append(zones,
-				SnapZone{leftEdgeTop, aTopLeft},
+				SnapZone{leftEdgeTop, firstNonNone(aTopLeft, ActionLeftHalf)},
 				SnapZone{leftEdgeMid, ActionLeftHalf},
-				SnapZone{leftEdgeBot, aBottomLeft},
+				SnapZone{leftEdgeBot, firstNonNone(aBottomLeft, ActionLeftHalf)},
 			)
 		} else {
 			zones = append(zones, SnapZone{
-				w32.RECT{Left: work.Left, Top: work.Top + corner, Right: work.Left + edgeW, Bottom: work.Bottom - corner},
+				w32.RECT{Left: work.Left, Top: work.Top + corner, Right: work.Left + effectiveEdgeW, Bottom: work.Bottom - corner},
 				aLeft,
 			})
 		}
@@ -228,13 +232,13 @@ func SnapZonesForWork(work w32.RECT, cfg *AppConfig) []SnapZone {
 	if aRight != ActionNone {
 		if midH > 0 && aRight == ActionRightHalf {
 			zones = append(zones,
-				SnapZone{rightEdgeTop, aTopRight},
+				SnapZone{rightEdgeTop, firstNonNone(aTopRight, ActionRightHalf)},
 				SnapZone{rightEdgeMid, ActionRightHalf},
-				SnapZone{rightEdgeBot, aBottomRight},
+				SnapZone{rightEdgeBot, firstNonNone(aBottomRight, ActionRightHalf)},
 			)
 		} else {
 			zones = append(zones, SnapZone{
-				w32.RECT{Left: work.Right - edgeW, Top: work.Top + corner, Right: work.Right, Bottom: work.Bottom - corner},
+				w32.RECT{Left: work.Right - effectiveEdgeW, Top: work.Top + corner, Right: work.Right, Bottom: work.Bottom - corner},
 				aRight,
 			})
 		}

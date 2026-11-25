@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -24,18 +26,19 @@ var appVersion = "dev"
 const (
 	appName = "SnapFlow"
 
-	wmOpenSettings = w32.WM_APP + 1
-	wmDoQuit       = w32.WM_APP + 2
-	wmOpenConfig   = w32.WM_APP + 3
+	wmOpenSettings   = w32.WM_APP + 1
+	wmDoQuit         = w32.WM_APP + 2
+	wmOpenConfig     = w32.WM_APP + 3
+	wmApplyCfg       = w32.WM_APP + 4
+	wmSuspendHotkeys = w32.WM_APP + 5
 )
 
-// cfgUpdateCh carries config updates from the settings WebView goroutine to the
-// main OS thread, where appCfg is also read by WinEvent callbacks. This avoids
-// a data race: the channel write (settings goroutine) and the channel read
-// (main thread msgLoop via wmApplyCfg) are the only two access paths.
-var cfgUpdateCh = make(chan *AppConfig, 1)
+var errHookInstall = errors.New("failed to install WinEvent hook")
 
-const wmApplyCfg = w32.WM_APP + 4
+// liveCfg mirrors appCfg for goroutines other than the main thread
+// (settings window, update checker, placement verification). appCfg itself
+// is only read/written on the main thread.
+var liveCfg atomic.Pointer[AppConfig]
 
 var (
 	appCfg       *AppConfig
@@ -54,30 +57,40 @@ func main() {
 	mutexName, _ := syscall.UTF16PtrFromString("SnapFlow_SingleInstance_Mutex")
 	kernel32.NewProc("CreateMutexW").Call(0, 0, uintptr(unsafe.Pointer(mutexName)))
 	if syscall.GetLastError() == syscall.Errno(183) { // ERROR_ALREADY_EXISTS
-		w32.MessageBox(0, "SnapFlow is already running.\nCheck the system tray.", appName, w32.MB_ICONINFORMATION|w32.MB_OK)
+		// Second launch (e.g. user double-clicked the shortcut again):
+		// instead of an error box, just open the running instance's settings.
+		if hwnd := w32.FindWindow("SnapFlowTray", ""); hwnd != 0 {
+			w32.PostMessage(hwnd, wmTrayOpenSettings, 0, 0)
+		}
 		os.Exit(0)
 	}
 
 	if !w32ex.SetProcessDPIAwareBestEffort() {
 		fmt.Fprintln(os.Stderr, "warn: DPI awareness failed")
 	}
-	if err := startup(); err != nil {
-		fmt.Fprintf(os.Stderr, "startup: %v\n", err)
+	cfgErr := startup()
+	if cfgErr != nil && !errors.Is(cfgErr, errConfigReset) {
+		w32.MessageBox(0, "SnapFlow could not start:\n\n"+cfgErr.Error(), appName, w32.MB_ICONERROR|w32.MB_OK)
 		os.Exit(1)
 	}
 
-	registerAllHotKeys()
-
-	// initTray runs on the main thread so the tray window's messages
-	// are delivered by our msgLoop (same OS thread = same message queue).
+	// Tray first, so the hotkey-conflict notice can use a tray balloon
+	// instead of a blocking dialog.
 	if err := initTray(); err != nil {
 		fmt.Fprintf(os.Stderr, "warn: tray: %v\n", err)
 	}
+	if errors.Is(cfgErr, errConfigReset) {
+		trayNotify(appName, tr("cfgReset"))
+	}
 
-	// Silent update check on startup — only shows a dialog if a new version
+	if failed := registerHotKeys(appCfg); len(failed) > 0 {
+		notifyShortcutConflicts(failed, false)
+	}
+
+	// Silent update check on startup — only notifies if a new version
 	// is available. Runs in background so it never delays startup.
 	go func() {
-		time.Sleep(5 * time.Second) // wait until app is fully running
+		time.Sleep(8 * time.Second)
 		checkForUpdates(true)
 	}()
 
@@ -89,135 +102,69 @@ func main() {
 		postToMain(wmDoQuit, 0, 0)
 	}()
 
-	if err := msgLoop(); err != nil {
+	err := msgLoop()
+	shutdown()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "message loop: %v\n", err)
 		os.Exit(1)
 	}
 }
 
+// startup loads config and starts the drag engine. A config reset is
+// reported (errConfigReset) but is not fatal.
 func startup() error {
 	var err error
 	appCfgStore, err = NewConfigStore()
 	if err != nil {
 		return fmt.Errorf("config store: %w", err)
 	}
-	appCfg, err = appCfgStore.Load()
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+	cfg, loadErr := appCfgStore.Load()
+	if loadErr != nil && !errors.Is(loadErr, errConfigReset) {
+		return fmt.Errorf("load config: %w", loadErr)
 	}
-	_ = appCfgStore.Save(appCfg)
+	appCfg = cfg
+	liveCfg.Store(cfg)
+	_ = appCfgStore.Save(appCfg) // persist migrated/backfilled values
 
 	overlay, err = NewOverlayRenderer()
 	if err != nil {
 		return fmt.Errorf("overlay: %w", err)
 	}
+	overlay.Configure(appCfg.AnimateFootprint, appCfg.FootprintAlpha)
 
 	gest := NewGestureInterpreter(appCfg)
 	dragMgr = NewDragManager(gest, overlay)
-	return dragMgr.Start()
+	if err := dragMgr.Start(); err != nil {
+		return err
+	}
+	return loadErr
 }
 
-// registerAllHotKeys registers Rectangle's default shortcuts translated to Windows.
-//
-// Mapping:  macOS Ctrl+Option → Windows Ctrl+Alt
-//
-//	macOS Ctrl+Option+Cmd → Windows Ctrl+Alt+Win
-//
-// NOTE: Ctrl+Alt+Arrow is often grabbed by Intel/AMD/NVIDIA display-rotation
-// shortcuts. If registration fails the user is told which shortcuts conflicted
-// and the rest still work. The graphics-driver conflict can be fixed in the
-// GPU control panel ("Disable hotkeys" or "Rotate display" shortcut).
-func registerAllHotKeys() {
-	// Primary modifier set: Ctrl+Alt (= macOS Ctrl+Option)
-	ca := MOD_CONTROL | MOD_ALT | MOD_NOREPEAT
-	cas := MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT
-	caw := MOD_CONTROL | MOD_ALT | MOD_WIN | MOD_NOREPEAT
-
-	const (
-		vkLeft   = 0x25
-		vkRight  = 0x27
-		vkUp     = 0x26
-		vkDown   = 0x28
-		vkReturn = 0x0D
-		// macOS "Delete" key = Backspace on Windows (0x08).
-		// Ctrl+Alt+Delete is system-reserved by Windows and can never be registered.
-		vkBack  = 0x08
-		vkEqual = 0xBB
-		vkMinus = 0xBD // = and -
-
-		vkC = 0x43
-		vkD = 0x44
-		vkE = 0x45
-		vkF = 0x46
-		vkG = 0x47
-		vkI = 0x49
-		vkJ = 0x4A
-		vkK = 0x4B
-		vkR = 0x52
-		vkT = 0x54
-		vkU = 0x55
-	)
-
-	hks := []HotKey{
-		// ── Halves ───────────────────────────────────────────────────────────
-		// Ctrl+Alt+Arrow is commonly taken by GPU rotation shortcuts.
-		// If they fail the user sees which ones and can fix in GPU settings.
-		{id: 1, mod: ca, vk: vkLeft, label: "Left Half", action: ActionLeftHalf},
-		{id: 2, mod: ca, vk: vkRight, label: "Right Half", action: ActionRightHalf},
-		{id: 3, mod: ca, vk: vkUp, label: "Top Half", action: ActionTopHalf},
-		{id: 4, mod: ca, vk: vkDown, label: "Bottom Half", action: ActionBottomHalf},
-
-		// ── Quarters ─────────────────────────────────────────────────────────
-		{id: 10, mod: ca, vk: vkU, label: "Top Left", action: ActionTopLeft},
-		{id: 11, mod: ca, vk: vkI, label: "Top Right", action: ActionTopRight},
-		{id: 12, mod: ca, vk: vkJ, label: "Bottom Left", action: ActionBottomLeft},
-		{id: 13, mod: ca, vk: vkK, label: "Bottom Right", action: ActionBottomRight},
-
-		// ── Thirds ───────────────────────────────────────────────────────────
-		{id: 20, mod: ca, vk: vkD, label: "First Third", action: ActionFirstThird},
-		{id: 21, mod: ca, vk: vkE, label: "First Two Thirds", action: ActionFirstTwoThirds},
-		{id: 22, mod: ca, vk: vkF, label: "Center Third", action: ActionCenterThird},
-		{id: 23, mod: ca, vk: vkT, label: "Last Two Thirds", action: ActionLastTwoThirds},
-		{id: 24, mod: ca, vk: vkG, label: "Last Third", action: ActionLastThird},
-		{id: 25, mod: ca, vk: vkR, label: "Center Two Thirds", action: ActionCenterTwoThirds},
-
-		// ── Maximize ─────────────────────────────────────────────────────────
-		{id: 30, mod: ca, vk: vkReturn, label: "Maximize", action: ActionMaximize},
-		{id: 31, mod: cas, vk: vkReturn, label: "Almost Maximize", action: ActionAlmostMaximize},
-		{id: 32, mod: cas, vk: vkUp, label: "Maximize Height", action: ActionMaximizeHeight},
-
-		// ── Center / Resize / Restore ─────────────────────────────────────────
-		{id: 40, mod: ca, vk: vkC, label: "Center", action: ActionCenter},
-		{id: 50, mod: ca, vk: vkEqual, label: "Larger", action: ActionLarger},
-		{id: 51, mod: ca, vk: vkMinus, label: "Smaller", action: ActionSmaller},
-		{id: 60, mod: ca, vk: vkBack, label: "Restore (Ctrl+Alt+Backspace)", action: ActionRestore},
-
-		// ── Multi-monitor ────────────────────────────────────────────────────
-		{id: 70, mod: caw, vk: vkRight, label: "Next Display", action: ActionNextDisplay},
-		{id: 71, mod: caw, vk: vkLeft, label: "Previous Display", action: ActionPreviousDisplay},
+func shutdown() {
+	unregisterAllHotKeys()
+	if dragMgr != nil {
+		dragMgr.Stop()
 	}
-
-	var failed []HotKey
-	for _, hk := range hks {
-		hk.callback = makeActionCallback(hk.action)
-		if !RegisterHotKey(hk) {
-			failed = append(failed, hk)
-		}
+	if overlay != nil {
+		overlay.Close()
 	}
-	if len(failed) > 0 {
-		showShortcutConflictDialog(failed)
-	}
+	removeTrayIcon()
 }
 
-// makeActionCallback returns the callback function for a WindowAction hotkey.
-func makeActionCallback(action WindowAction) func() {
-	return func() {
-		hwnd := w32.GetForegroundWindow()
-		if !isZonableWindow(hwnd) {
-			return
-		}
-		executeAction(hwnd, action)
+// runAction applies a WindowAction to the foreground window (hotkey path).
+func runAction(action WindowAction) {
+	hwnd := w32.GetForegroundWindow()
+	if !isZonableWindow(hwnd) {
+		return
 	}
+	executeAction(hwnd, action)
+}
+
+// halfCycles: pressing the same half shortcut repeatedly walks through
+// these sizes (Rectangle's default "subsequent execution" behaviour).
+var halfCycles = map[WindowAction][]WindowAction{
+	ActionLeftHalf:  {ActionLeftHalf, ActionFirstTwoThirds, ActionFirstThird},
+	ActionRightHalf: {ActionRightHalf, ActionLastTwoThirds, ActionLastThird},
 }
 
 // executeAction applies a WindowAction to the given window.
@@ -231,6 +178,8 @@ func executeAction(hwnd w32.HWND, action WindowAction) {
 	case ActionRestore:
 		if prev, ok := windowHistory.Pop(hwnd); ok {
 			resizeToRect(hwnd, prev)
+		} else if w32ex.IsZoomed(hwnd) {
+			w32.ShowWindow(hwnd, w32.SW_RESTORE)
 		}
 		return
 
@@ -244,28 +193,39 @@ func executeAction(hwnd w32.HWND, action WindowAction) {
 	case ActionDisplayOne, ActionDisplayTwo, ActionDisplayThree,
 		ActionDisplayFour, ActionDisplayFive, ActionDisplaySix,
 		ActionDisplaySeven, ActionDisplayEight, ActionDisplayNine:
-		idx := int(action - ActionDisplayOne)
-		moveToDisplayByIndex(hwnd, idx)
+		moveToDisplayByIndex(hwnd, int(action-ActionDisplayOne))
 		return
 	}
 
-	mon := w32.MonitorFromWindow(hwnd, w32.MONITOR_DEFAULTTONEAREST)
-	var monInfo w32.MONITORINFO
-	if !w32.GetMonitorInfo(mon, &monInfo) {
+	work, ok := monitorWork(w32.MonitorFromWindow(hwnd, w32.MONITOR_DEFAULTTONEAREST))
+	if !ok {
 		return
 	}
-	work := monInfo.RcWork
-	cur := w32.GetWindowRect(hwnd)
-	if cur == nil {
+	// Geometry works on the visible frame (not GetWindowRect), otherwise
+	// size-relative actions like Center/Larger grew the window by the
+	// invisible border on every press.
+	cur, ok := frameRect(hwnd)
+	if !ok {
 		return
 	}
 
-	// Save to history before modifying.
-	windowHistory.Save(hwnd, *cur)
+	effective, cycleIdx := action, -1
+	if cycle, isCycle := halfCycles[action]; isCycle && appCfg.CycleHalves {
+		cycleIdx = windowHistory.NextCycle(hwnd, action, cur, len(cycle))
+		effective = cycle[cycleIdx]
+	}
 
-	target := action.Calculate(work, *cur, appCfg)
-	if _, err := resizeToRect(hwnd, target); err != nil {
+	target := effective.Calculate(work, cur, appCfg)
+	got, err := resizeToRect(hwnd, target)
+	if err != nil {
 		fmt.Printf("warn: action %d: %v\n", action, err)
+		return
+	}
+	if got.Width() > 0 {
+		windowHistory.RecordSnap(hwnd, cur, got)
+		if cycleIdx >= 0 {
+			windowHistory.SetCycle(hwnd, action, cycleIdx)
+		}
 	}
 }
 

@@ -16,17 +16,18 @@ const (
 	releasesURL    = "https://github.com/Alexaalex93/SnapFlow/releases"
 )
 
-// checkForUpdates queries GitHub for the latest release and shows a result dialog.
-// If silent=true, only shows a dialog when an update is available (used on startup).
+func openReleasesPage() {
+	w32.ShellExecute(0, "open", releasesURL, "", "", w32.SW_SHOWNORMAL)
+}
+
+// checkForUpdates queries GitHub for the latest release and reports the
+// result as a tray notification (never a blocking dialog). If silent=true
+// (startup check) it only speaks up when an update is available.
 func checkForUpdates(silent bool) {
 	latest, err := fetchLatestVersion()
 	if err != nil {
 		if !silent {
-			w32.MessageBox(0,
-				"Could not check for updates:\n"+err.Error()+
-					"\n\nYou can check manually at:\n"+releasesURL,
-				appName+" — Update Check",
-				w32.MB_ICONWARNING|w32.MB_OK)
+			trayNotify(tr("updateErrTitle"), err.Error(), openReleasesPage)
 		}
 		return
 	}
@@ -36,29 +37,12 @@ func checkForUpdates(silent bool) {
 
 	if !isNewerVersion(latestClean, current) {
 		if !silent {
-			w32.MessageBox(0,
-				fmt.Sprintf("SnapFlow %s is up to date.", current),
-				appName+" — Up to date",
-				w32.MB_ICONINFORMATION|w32.MB_OK)
+			trayNotify(tr("upToDateTitle"), fmt.Sprintf(tr("upToDateBody"), current))
 		}
 		return
 	}
-
-	// New version available — show prompt regardless of silent flag.
-	msg := fmt.Sprintf(
-		"A new version of SnapFlow is available!\n\n"+
-			"  Installed:  %s\n"+
-			"  Available:  %s\n\n"+
-			"Download and run the new installer to update.\n"+
-			"SnapFlow will close automatically during the install.\n\n"+
-			"Open download page now?",
-		current, latestClean)
-
-	result := w32.MessageBox(0, msg, appName+" — Update Available",
-		w32.MB_ICONINFORMATION|w32.MB_YESNO)
-	if result == w32.IDYES {
-		w32.ShellExecute(0, "open", releasesURL, "", "", w32.SW_SHOWNORMAL)
-	}
+	trayNotify(fmt.Sprintf(tr("updateTitle"), latestClean),
+		fmt.Sprintf(tr("updateBody"), current), openReleasesPage)
 }
 
 // fetchLatestVersion returns the tag_name of the latest GitHub release.
@@ -78,7 +62,7 @@ func fetchLatestVersion() (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 404 {
-		return "", fmt.Errorf("no releases found (repository may be private)")
+		return "", fmt.Errorf("no releases found")
 	}
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("GitHub API returned %d", resp.StatusCode)
@@ -98,7 +82,11 @@ func fetchLatestVersion() (string, error) {
 
 // isNewerVersion returns true if candidate is strictly newer than current.
 // Both strings should be "MAJOR.MINOR.PATCH" without a leading "v".
+// A "dev" build is never offered updates.
 func isNewerVersion(candidate, current string) bool {
+	if current == "dev" || current == "" {
+		return false
+	}
 	ca := parseSemVer(candidate)
 	cu := parseSemVer(current)
 	for i := 0; i < 3; i++ {

@@ -592,11 +592,27 @@ func clampToWork(r, work w32.RECT) w32.RECT {
 	return r
 }
 
+// UsesCurrentRect reports whether Calculate depends on the window's current
+// frame (resize/move/center actions) rather than only on the work area.
+func (a WindowAction) UsesCurrentRect() bool {
+	switch a {
+	case ActionMaximizeHeight, ActionCenter,
+		ActionLarger, ActionSmaller, ActionLargerWidth, ActionSmallerWidth,
+		ActionLargerHeight, ActionSmallerHeight,
+		ActionDoubleHeightUp, ActionDoubleHeightDown, ActionDoubleWidthLeft, ActionDoubleWidthRight,
+		ActionHalveHeightUp, ActionHalveHeightDown, ActionHalveWidthLeft, ActionHalveWidthRight,
+		ActionMoveLeft, ActionMoveRight, ActionMoveUp, ActionMoveDown:
+		return true
+	}
+	return false
+}
+
 // IsDragSnappable returns true if this action can be triggered by drag-to-snap.
 // Matches Rectangle's isDragSnappable property.
 func (a WindowAction) IsDragSnappable() bool {
 	switch a {
-	case ActionRestore, ActionPreviousDisplay, ActionNextDisplay,
+	case ActionNone, actionCompoundThirds,
+		ActionRestore, ActionPreviousDisplay, ActionNextDisplay,
 		ActionMoveUp, ActionMoveDown, ActionMoveLeft, ActionMoveRight,
 		ActionLarger, ActionSmaller, ActionLargerWidth, ActionSmallerWidth,
 		ActionTopLeftNinth, ActionTopCenterNinth, ActionTopRightNinth,

@@ -44,6 +44,28 @@ body{font-family:"Segoe UI",system-ui,sans-serif;font-size:13px;
 .chip.rec{background:#fffbeb;border:1.5px solid #f59e0b;color:#92400e;
           animation:blink .9s step-end infinite}
 @keyframes blink{50%{border-color:transparent}}
+.chip.changed{background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46}
+.sc-reset{width:22px;height:22px;border:none;background:transparent;color:#999;cursor:pointer;
+          border-radius:4px;font-size:13px;visibility:hidden;flex-shrink:0}
+.sc-row:hover .sc-reset.show{visibility:visible}
+.sc-reset:hover{background:#eee;color:#333}
+.sc-hint{padding:7px 14px;font-size:11.5px;color:#555;background:#fafafa;border-bottom:1px solid #e8e8e8;
+         display:flex;align-items:center;gap:8px}
+.sc-hint b{font-weight:600;color:#333}
+.sc-search{margin-left:auto;height:24px;width:180px;border:1px solid #d0d0d0;border-radius:5px;
+           padding:0 8px;font-size:12px;font-family:inherit;outline:none}
+.sc-search:focus{border-color:#0078d4;box-shadow:0 0 0 2px rgba(0,120,212,.15)}
+.toast{position:fixed;left:50%;bottom:60px;transform:translateX(-50%) translateY(10px);opacity:0;
+       background:#1f2937;color:white;padding:7px 14px;border-radius:6px;font-size:12px;
+       transition:all .2s;pointer-events:none;z-index:10;max-width:80%;text-align:center}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.switch{position:relative;width:34px;height:18px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.switch span{position:absolute;inset:0;background:#c8c8c8;border-radius:9px;transition:.15s;cursor:pointer}
+.switch span::before{content:'';position:absolute;width:14px;height:14px;left:2px;top:2px;
+                     background:white;border-radius:50%;transition:.15s}
+.switch input:checked+span{background:#0078d4}
+.switch input:checked+span::before{transform:translateX(16px)}
 /* Snap Areas */
 .snap-page{flex:1;overflow-y:auto;background:#f5f5f5;padding:12px 16px}
 .winsnap-row{margin-bottom:12px;padding:9px 14px;background:white;border:1px solid #e0e0e0;
@@ -142,15 +164,20 @@ body{font-family:"Segoe UI",system-ui,sans-serif;font-size:13px;
       </button>
     </div>
     <div class="lang-group">
-      <button class="lang-btn active" data-lang="en" onclick="setLang('en')">EN</button>
-      <button class="lang-btn" data-lang="es" onclick="setLang('es')">ES</button>
+      <button class="lang-btn active" data-lang="en" onclick="setLang('en',true)">EN</button>
+      <button class="lang-btn" data-lang="es" onclick="setLang('es',true)">ES</button>
     </div>
   </div>
 </div>
 
 <div id="page-shortcuts" class="page active">
+  <div class="sc-hint">
+    <span data-i18n="scHint">Click a shortcut to change it. <b>Backspace</b> clears it, <b>Esc</b> cancels.</span>
+    <input class="sc-search" id="scSearch" type="search" oninput="filterShortcuts(this.value)">
+  </div>
   <div class="list-wrap"><div id="scList"></div></div>
 </div>
+<div class="toast" id="toast"></div>
 
 <div id="page-snapAreas" class="page">
   <div class="snap-page">
@@ -161,7 +188,7 @@ body{font-family:"Segoe UI",system-ui,sans-serif;font-size:13px;
       </div>
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
         <input type="checkbox" id="winSnapEnabled" style="width:14px;height:14px;accent-color:#0078d4"
-               onchange="goSetWindowsSnap(this.checked)">
+               onchange="setWinSnap(this)">
         <span data-i18n="winSnapEnabled">Enabled</span>
       </label>
     </div>
@@ -258,7 +285,7 @@ body{font-family:"Segoe UI",system-ui,sans-serif;font-size:13px;
     <button class="btn" onclick="goOpenConfigFile()"><span data-i18n="btnConfig">Open config file</span></button>
   </div>
   <span class="saved" id="savedMsg"><span data-i18n="saved">Saved ✓</span></span>
-  <button class="btn" onclick="window.close?window.close():history.back()"><span data-i18n="btnCancel">Cancel</span></button>
+  <button class="btn" onclick="goClose()"><span data-i18n="btnCancel">Cancel</span></button>
   <button class="btn ok" onclick="save()"><span data-i18n="btnSave">Save</span></button>
 </div>
 
@@ -287,6 +314,11 @@ const LANGS = {
     gAlmost:'Almost Maximize',gW:'Width',gH:'Height',
     gResize:'Resize Step',gStep:'Step size (Larger / Smaller actions)',
     gStartup:'Startup',gAutorun:'Launch at login',gAutorunSub:'Start SnapFlow automatically when you log in to Windows',
+    gKeyboard:'Keyboard',gCycle:'Cycle sizes',gCycleSub:'Pressing Left/Right Half again cycles ½ → ⅔ → ⅓',
+    gAppearance:'Snap preview',gOpacity:'Preview opacity',gOpacitySub:'How solid the blue preview looks while dragging',
+    scHint:'Click a shortcut to change it. <b>Backspace</b> clears it, <b>Esc</b> cancels.',
+    scSearch:'Search…',recPress:'Press keys…',recNeedMod:'Use at least Ctrl, Alt or Win (or an F-key)',
+    recMoved:'Removed from “%s” (it had the same shortcut)',scResetOne:'Back to default',
     btnReset:'Reset defaults',btnConfig:'Open config file',btnCancel:'Cancel',btnSave:'Save',saved:'Saved ✓',
   },
   es:{
@@ -311,17 +343,31 @@ const LANGS = {
     gAlmost:'Casi maximizar',gW:'Ancho',gH:'Alto',
     gResize:'Paso de redimensión',gStep:'Tamaño de paso (Ampliar / Reducir)',
     gStartup:'Inicio',gAutorun:'Iniciar al iniciar sesión',gAutorunSub:'Ejecutar SnapFlow automáticamente al iniciar sesión en Windows',
+    gKeyboard:'Teclado',gCycle:'Alternar tamaños',gCycleSub:'Pulsar otra vez Mitad izq./der. alterna ½ → ⅔ → ⅓',
+    gAppearance:'Vista previa',gOpacity:'Opacidad de la vista previa',gOpacitySub:'Lo sólida que se ve la vista previa azul al arrastrar',
+    scHint:'Haz clic en un atajo para cambiarlo. <b>Retroceso</b> lo borra, <b>Esc</b> cancela.',
+    scSearch:'Buscar…',recPress:'Pulsa las teclas…',recNeedMod:'Usa al menos Ctrl, Alt o Win (o una tecla F)',
+    recMoved:'Quitado de «%s» (tenía el mismo atajo)',scResetOne:'Volver al predeterminado',
     btnReset:'Restaurar valores',btnConfig:'Abrir configuración',btnCancel:'Cancelar',btnSave:'Guardar',saved:'Guardado ✓',
   },
 };
 let curLang = 'en';
 function T(k){ return LANGS[curLang][k] || LANGS.en[k] || k; }
 
-function setLang(l){
+function setLang(l, persist){
   curLang = l;
+  document.documentElement.lang = l;
   document.querySelectorAll('[data-i18n]').forEach(el => { el.innerHTML = T(el.dataset.i18n); });
   document.querySelectorAll('.lang-btn').forEach(b => b.classList.toggle('active', b.dataset.lang === l));
+  const s=document.getElementById('scSearch'); if(s) s.placeholder=T('scSearch');
+  readGeneral();
   buildGeneral();
+  if(persist && window.goSetLanguage) goSetLanguage(l);
+}
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2600);
 }
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
@@ -403,52 +449,90 @@ function makeDiagram(aid){
 }
 
 // ── Shortcuts ─────────────────────────────────────────────────────────────────
-let recordingChip=null;
+// window._shortcuts is edited in place and sent back on Save.
+// Modifier bits match Win32 MOD_*: Alt=1, Ctrl=2, Shift=4, Win=8.
+const SC=window._shortcuts;
+let rec=-1; // index of the shortcut being recorded, -1 = none
+
+function isCustom(e){ return e.mod!==e.defMod||e.vk!==e.defVk; }
+function renderChip(i){
+  const e=SC[i];
+  const c=document.querySelector('.chip[data-i="'+i+'"]');
+  if(c){ c.className='chip '+(!e.vk?'off':(isCustom(e)?'changed':'on')); c.textContent=e.text||'—'; }
+  const r=document.querySelector('.sc-reset[data-i="'+i+'"]');
+  if(r) r.classList.toggle('show',isCustom(e));
+}
 function buildShortcuts(){
-  const list=document.getElementById('scList');
-  let sec='';
-  window._shortcuts.forEach((e,i)=>{
-    if(e.section!==sec){
-      sec=e.section;
-      list.insertAdjacentHTML('beforeend','<div class="sec-hdr">'+e.section+'</div>');
-    }
-    const on=!!e.text;
-    list.insertAdjacentHTML('beforeend',` + "`" + `
-      <div class="sc-row">
-        <span class="sc-diagram">${makeDiagram(e.action)}</span>
-        <span class="sc-name">${e.label}</span>
-        <div class="chip ${on?'on':'off'}" data-i="${i}" onclick="toggleRec(this,${i})">${e.text||'—'}</div>
-      </div>` + "`" + `);
+  let sec='',h='';
+  SC.forEach((e,i)=>{
+    if(e.section!==sec){ sec=e.section; h+='<div class="sec-hdr">'+sec+'</div>'; }
+    h+='<div class="sc-row" data-name="'+e.label.toLowerCase()+'">'+
+       '<span class="sc-diagram">'+makeDiagram(e.action)+'</span>'+
+       '<span class="sc-name">'+e.label+'</span>'+
+       '<button class="sc-reset" data-i="'+i+'" title="'+T('scResetOne')+'" onclick="resetOne('+i+')">↺</button>'+
+       '<div class="chip" data-i="'+i+'" onclick="startRec('+i+')"></div></div>';
+  });
+  document.getElementById('scList').innerHTML=h;
+  SC.forEach((_,i)=>renderChip(i));
+}
+function filterShortcuts(q){
+  q=q.trim().toLowerCase();
+  document.querySelectorAll('.sc-row').forEach(r=>{ r.style.display=(!q||r.dataset.name.includes(q))?'':'none'; });
+  document.querySelectorAll('.sec-hdr').forEach(hd=>{
+    let n=hd.nextElementSibling,any=false;
+    while(n&&!n.classList.contains('sec-hdr')){ if(n.style.display!=='none')any=true; n=n.nextElementSibling; }
+    hd.style.display=any?'':'none';
   });
 }
-function toggleRec(chip,idx){
-  if(recordingChip){
-    const ri=parseInt(recordingChip.dataset.i);
-    recordingChip.className='chip '+(window._shortcuts[ri].text?'on':'off');
-    recordingChip.textContent=window._shortcuts[ri].text||'—';
-    if(recordingChip===chip){recordingChip=null;return;}
-  }
-  recordingChip=chip;chip.className='chip rec';chip.textContent='Press keys…';
+function stopRec(){
+  if(rec<0)return;
+  const i=rec; rec=-1; renderChip(i);
+  if(window.goSuspendHotkeys) goSuspendHotkeys(false);
 }
-document.addEventListener('keydown',e=>{
-  if(!recordingChip)return;
-  e.preventDefault();
-  const idx=parseInt(recordingChip.dataset.i);
-  if(e.key==='Escape'){
-    recordingChip.className='chip '+(window._shortcuts[idx].text?'on':'off');
-    recordingChip.textContent=window._shortcuts[idx].text||'—';
-    recordingChip=null;return;
-  }
-  if(['Control','Alt','Shift','Meta','CapsLock'].includes(e.key))return;
-  let s='';
-  if(e.ctrlKey)s+='Ctrl+';if(e.altKey)s+='Alt+';
-  if(e.shiftKey)s+='Shift+';if(e.metaKey)s+='Win+';
-  const km={'ArrowLeft':'←','ArrowRight':'→','ArrowUp':'↑','ArrowDown':'↓',
-            'Enter':'↩','Backspace':'⌫','Delete':'⌦','Equal':'=','Minus':'-'};
-  s+=km[e.key]||(e.key.length===1?e.key.toUpperCase():e.key);
-  window._shortcuts[idx].text=s;
-  recordingChip.className='chip on';recordingChip.textContent=s;recordingChip=null;
+function startRec(i){
+  if(rec===i){ stopRec(); return; }
+  stopRec(); rec=i;
+  const c=document.querySelector('.chip[data-i="'+i+'"]');
+  c.className='chip rec'; c.textContent=T('recPress');
+  // Release SnapFlow's global hotkeys so the page can see the keys.
+  if(window.goSuspendHotkeys) goSuspendHotkeys(true);
+}
+function resetOne(i){ const e=SC[i]; setBinding(i,e.defMod,e.defVk); }
+function setBinding(i,mod,vk){
+  const e=SC[i];
+  e.vk=vk; e.mod=vk?mod:0;
+  if(!vk){ e.text=''; renderChip(i); return; }
+  // One combo, one action: take it away from whoever had it.
+  SC.forEach((o,j)=>{
+    if(j!==i&&o.vk===vk&&o.mod===e.mod){
+      o.mod=0;o.vk=0;o.text='';renderChip(j);
+      toast(T('recMoved').replace('%s',o.label));
+    }
+  });
+  goShortcutText(e.mod,vk).then(t=>{ e.text=t; renderChip(i); });
+}
+document.addEventListener('mousedown',ev=>{
+  if(rec>=0&&!ev.target.classList.contains('chip')) stopRec();
 });
+document.addEventListener('keydown',ev=>{
+  if(rec<0){
+    if(ev.ctrlKey&&(ev.key==='s'||ev.key==='S')){ ev.preventDefault(); save(); }
+    return;
+  }
+  ev.preventDefault(); ev.stopPropagation();
+  const k=ev.key;
+  if(k==='Escape'){ stopRec(); return; }
+  if(['Control','Alt','Shift','Meta','OS','CapsLock','AltGraph'].includes(k)) return;
+  let mod=0;
+  if(ev.altKey)mod|=1; if(ev.ctrlKey)mod|=2; if(ev.shiftKey)mod|=4; if(ev.metaKey)mod|=8;
+  const vk=ev.keyCode; // Chromium on Windows reports the Win32 virtual-key code
+  if(!mod&&(k==='Backspace'||k==='Delete')){ const i=rec; stopRec(); setBinding(i,0,0); return; }
+  const isF=vk>=0x70&&vk<=0x87;
+  if(!(mod&(1|2|8))&&!isF){ toast(T('recNeedMod')); return; }
+  const i=rec; rec=-1;
+  if(window.goSuspendHotkeys) goSuspendHotkeys(false);
+  setBinding(i,mod,vk);
+},true);
 
 // ── Snap Areas ────────────────────────────────────────────────────────────────
 const ALL_ZONE_OPTS=[
@@ -607,16 +691,47 @@ function buildGeneral(){
       </div>
     </div>
     <div class="gen-card">
+      <div class="gen-card-title">${T('gKeyboard')}</div>
+      <div class="gen-row">
+        <div class="gen-lbl"><div class="gen-lbl-main">${T('gCycle')}</div>
+          <div class="gen-lbl-sub">${T('gCycleSub')}</div></div>
+        <label class="switch"><input type="checkbox" id="cycleHalves" ${g.cycleHalves?'checked':''}><span></span></label>
+      </div>
+    </div>
+    <div class="gen-card">
+      <div class="gen-card-title">${T('gAppearance')}</div>
+      <div class="gen-row">
+        <div class="gen-lbl"><div class="gen-lbl-main">${T('gOpacity')}</div>
+          <div class="gen-lbl-sub">${T('gOpacitySub')}</div></div>
+        <input class="num-in" id="previewOpacity" type="number" min="10" max="90" value="${g.previewOpacity}">
+        <span class="gen-sfx">%</span>
+      </div>
+    </div>
+    <div class="gen-card">
       <div class="gen-card-title">${T('gStartup')}</div>
       <div class="gen-row">
         <div class="gen-lbl"><div class="gen-lbl-main">${T('gAutorun')}</div>
           <div class="gen-lbl-sub">${T('gAutorunSub')}</div></div>
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
-          <input type="checkbox" id="autorunEnabled" style="width:14px;height:14px;accent-color:#0078d4"
-                 ${window._autorun?'checked':''} onchange="goSetAutorun(this.checked)">
-        </label>
+        <label class="switch"><input type="checkbox" id="autorunEnabled"
+               ${window._autorun?'checked':''} onchange="setAutorun(this)"><span></span></label>
       </div>
     </div>` + "`" + `;
+}
+
+// Keep unsaved edits when the General tab is rebuilt (e.g. language switch).
+function readGeneral(){
+  const g=window._general, v=id=>document.getElementById(id);
+  if(!v('edgeThreshold')) return;
+  const n=id=>parseInt(v(id).value||'0',10);
+  g.edgeThreshold=n('edgeThreshold'); g.cornerSize=n('cornerSize'); g.shortEdgeSize=n('shortEdgeSize');
+  g.gapSize=n('gapSize'); g.almostMaxWidth=n('almostMaxWidth'); g.almostMaxHeight=n('almostMaxHeight');
+  g.sizeStep=n('sizeStep'); g.previewOpacity=n('previewOpacity'); g.cycleHalves=v('cycleHalves').checked;
+}
+function setAutorun(el){
+  goSetAutorun(el.checked).then(on=>{ el.checked=on; window._autorun=on; });
+}
+function setWinSnap(el){
+  goSetWindowsSnap(el.checked).then(on=>{ el.checked=on; window._winSnap=on; });
 }
 
 // ── Save / Reset ──────────────────────────────────────────────────────────────
@@ -624,22 +739,30 @@ function save(){
   const gi=id=>parseInt(document.getElementById(id)?.value||'0',10);
   const gv=id=>document.getElementById(id)?.value||'';
   const gc=id=>document.getElementById(id)?.checked||false;
+  stopRec();
   goSaveSettings(JSON.stringify({
     general:{edgeThreshold:gi('edgeThreshold'),cornerSize:gi('cornerSize'),
              shortEdgeSize:gi('shortEdgeSize'),gapSize:gi('gapSize'),
              almostMaxWidth:gi('almostMaxWidth'),almostMaxHeight:gi('almostMaxHeight'),
-             sizeStep:gi('sizeStep')},
+             sizeStep:gi('sizeStep'),cycleHalves:gc('cycleHalves'),
+             previewOpacity:gi('previewOpacity')},
     snapAreas:{snapByDragging:gc('snapByDragging'),restoreSize:gc('restoreSize'),
                animateFootprint:gc('animateFootprint'),
                topLeft:gv('z-topLeft'),top:gv('z-top'),topRight:gv('z-topRight'),
                left:gv('z-left'),right:gv('z-right'),
-               bottomLeft:gv('z-bottomLeft'),bottom:gv('z-bottom'),bottomRight:gv('z-bottomRight')}
+               bottomLeft:gv('z-bottomLeft'),bottom:gv('z-bottom'),bottomRight:gv('z-bottomRight')},
+    shortcuts:SC.map(e=>({action:e.action,mod:e.mod,vk:e.vk})),
+    language:curLang
   }));
 }
 function resetDefaults(){
   const d={edgeThreshold:12,cornerSize:20,shortEdgeSize:145,
-           gapSize:0,almostMaxWidth:90,almostMaxHeight:90,sizeStep:30};
+           gapSize:0,almostMaxWidth:90,almostMaxHeight:90,sizeStep:30,previewOpacity:30};
   Object.entries(d).forEach(([k,v])=>{const el=document.getElementById(k);if(el)el.value=v;});
+  const ch=document.getElementById('cycleHalves'); if(ch) ch.checked=true;
+  document.getElementById('restoreSize').checked=true;
+  stopRec();
+  SC.forEach((e,i)=>{ e.mod=e.defMod; e.vk=e.defVk; e.text=e.defText; renderChip(i); });
   const z={topLeft:'topLeft',top:'maximize',topRight:'topRight',
            left:'leftHalf',right:'rightHalf',
            bottomLeft:'bottomLeft',bottom:'compoundThirds',bottomRight:'bottomRight'};
@@ -692,5 +815,6 @@ buildShortcuts();
 buildSnapAreas();
 buildGeneral();
 buildAbout();
+setLang(window._lang==='es'?'es':'en', false);
 </script>
 </body></html>`

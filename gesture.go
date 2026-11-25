@@ -6,27 +6,33 @@ import (
 	"github.com/gonutz/w32/v2"
 )
 
+// actionCompoundThirds is an internal zone action used only for the bottom
+// edge when it is configured as "compoundThirds". The gesture interpreter
+// resolves it into a concrete third / two-thirds / maximize action, so it
+// never reaches Calculate().
+const actionCompoundThirds WindowAction = -2
+
 // GestureInterpreter tracks a window drag and maps cursor position
 // to a WindowAction via snap zones.
 // Translates Rectangle's SnappingManager drag detection logic.
 //
 // Threading: Begin/Update/End/CurrentAction are called from the WinEvent
-// callback (main OS thread). UpdateConfig is called from the settings
-// save path (WebView goroutine). The cfgMu read-write mutex makes cfg
-// access safe across those two paths.
+// callback (main OS thread). UpdateConfig may be called from anywhere; the
+// cfgMu read-write mutex makes cfg access safe.
 type GestureInterpreter struct {
 	cfgMu sync.RWMutex
 	cfg   *AppConfig
 	state gestureState
 }
 
-// bottomZoneState tracks cursor horizontal extent while in the bottom snap zone.
-// This enables the "compound thirds" behaviour: drag across multiple thirds to
-// snap the window to the combined area (like Rectangle's ThirdsCompoundCalculation).
+// bottomZoneState implements Rectangle-style compound thirds on the bottom
+// edge. The third where the cursor ENTERED the bottom zone is the anchor;
+// the window spans from the anchor third to the third under the cursor.
+// Moving back towards the anchor shrinks the span again, so the gesture is
+// fully reversible (the old min/max tracking could only ever grow).
 type bottomZoneState struct {
 	active bool
-	xMin   int32 // leftmost cursor X seen while in bottom zone
-	xMax   int32 // rightmost cursor X seen while in bottom zone
+	anchor int // 0, 1 or 2
 }
 
 type gestureState struct {
@@ -75,48 +81,24 @@ func (g *GestureInterpreter) Update(cursor w32.POINT, work w32.RECT) WindowActio
 	if !g.state.active {
 		return ActionNone
 	}
-	cfg := g.readCfg()
 
 	// Rebuild zones if the monitor changed.
 	if len(g.state.zones) == 0 || !rectEqual(&g.state.work, &work) {
-		g.state.zones = SnapZonesForWork(work, cfg)
+		g.state.zones = SnapZonesForWork(work, g.readCfg())
 		g.state.work = work
+		g.state.bottom.active = false
 	}
 
 	action := ActionForCursor(cursor, g.state.zones)
 
-	// ── Compound bottom thirds ────────────────────────────────────────────
-	// When the cursor is in the bottom snap zone, track horizontal extent
-	// so that dragging across multiple thirds combines them.
-	if action == ActionBottomHalf || action == ActionFirstThird ||
-		action == ActionCenterThird || action == ActionLastThird ||
-		action == ActionFirstTwoThirds || action == ActionLastTwoThirds {
-
-		inBottom := cursorInBottomZone(cursor, work, cfg)
-		if inBottom {
-			if !g.state.bottom.active {
-				// Entering the bottom zone — start tracking.
-				g.state.bottom = bottomZoneState{
-					active: true,
-					xMin:   cursor.X,
-					xMax:   cursor.X,
-				}
-			} else {
-				// Extend the tracked range.
-				if cursor.X < g.state.bottom.xMin {
-					g.state.bottom.xMin = cursor.X
-				}
-				if cursor.X > g.state.bottom.xMax {
-					g.state.bottom.xMax = cursor.X
-				}
-			}
-			// Calculate action based on horizontal extent.
-			action = bottomThirdsAction(work, g.state.bottom.xMin, g.state.bottom.xMax)
-		} else {
-			g.state.bottom.active = false
+	if action == actionCompoundThirds {
+		cur := thirdIndex(work, cursor.X)
+		if !g.state.bottom.active {
+			g.state.bottom = bottomZoneState{active: true, anchor: cur}
 		}
+		action = thirdsSpanAction(g.state.bottom.anchor, cur)
 	} else {
-		// Left the bottom zone — reset tracking so next entry starts fresh.
+		// Left the bottom zone — next entry starts a fresh span.
 		g.state.bottom.active = false
 	}
 
@@ -124,57 +106,51 @@ func (g *GestureInterpreter) Update(cursor w32.POINT, work w32.RECT) WindowActio
 	return action
 }
 
-// cursorInBottomZone returns true if the cursor is in the bottom snap edge area.
-// Uses the same effectiveEdgeW logic as SnapZonesForWork so detection matches zones.
-func cursorInBottomZone(cursor w32.POINT, work w32.RECT, cfg *AppConfig) bool {
-	edgeW := int32(cfg.EdgeThresholdPx)
-	if edgeW <= 0 {
-		edgeW = 12
+// thirdIndex returns 0, 1 or 2 for the horizontal third containing x.
+func thirdIndex(work w32.RECT, x int32) int {
+	W := work.Width()
+	if W <= 0 {
+		return 1
 	}
-	corner := int32(cfg.CornerSnapAreaSize)
-	if corner <= 0 {
-		corner = 20
+	i := int((x - work.Left) * 3 / W)
+	if i < 0 {
+		return 0
 	}
-	if corner > edgeW {
-		edgeW = corner // match effectiveEdgeW from SnapZonesForWork
+	if i > 2 {
+		return 2
 	}
-	return cursor.Y >= work.Bottom-edgeW &&
-		cursor.X > work.Left+corner &&
-		cursor.X < work.Right-corner
+	return i
 }
 
-// bottomThirdsAction calculates which snap action to apply based on how far
-// the cursor has been dragged horizontally within the bottom zone.
+// thirdsSpanAction maps a span of thirds [a..b] (either order) to an action:
 //
-// Rules (matching Rectangle's compound thirds behaviour):
-//
-//	Left third only              → FirstThird   (left 1/3 of screen)
-//	Center third only            → CenterThird
-//	Right third only             → LastThird    (right 1/3 of screen)
-//	Left + Center                → FirstTwoThirds
-//	Center + Right               → LastTwoThirds
-//	All three (left→right span)  → Maximize
-func bottomThirdsAction(work w32.RECT, xMin, xMax int32) WindowAction {
-	W := work.Width()
-	t1 := work.Left + W/3   // end of first third
-	t2 := work.Left + W*2/3 // end of second third
-
-	coversFirst := xMin < t1
-	coversCenter := xMax > work.Left+W/3 && xMin < t2
-	coversLast := xMax >= t2
-
+//	single third        → First / Center / Last Third
+//	first + center      → First Two Thirds
+//	center + last       → Last Two Thirds
+//	all three           → Maximize
+func thirdsSpanAction(a, b int) WindowAction {
+	lo, hi := a, b
+	if lo > hi {
+		lo, hi = hi, lo
+	}
 	switch {
-	case coversFirst && coversCenter && coversLast:
+	case lo == 0 && hi == 2:
 		return ActionMaximize
-	case coversFirst && coversCenter:
+	case lo == 0 && hi == 1:
 		return ActionFirstTwoThirds
-	case coversCenter && coversLast:
+	case lo == 1 && hi == 2:
 		return ActionLastTwoThirds
-	case coversFirst:
+	case lo == 0:
 		return ActionFirstThird
-	case coversLast:
+	case lo == 2:
 		return ActionLastThird
 	default:
 		return ActionCenterThird
 	}
+}
+
+// bottomThirdsAction is kept for callers/tests that think in x-coordinates:
+// it returns the action for a sweep between x positions xa and xb.
+func bottomThirdsAction(work w32.RECT, xa, xb int32) WindowAction {
+	return thirdsSpanAction(thirdIndex(work, xa), thirdIndex(work, xb))
 }
