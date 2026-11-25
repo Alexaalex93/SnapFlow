@@ -32,6 +32,7 @@ Download `SnapFlow-x.x.x-Setup.exe` and run it. The installer:
 | ↩️ **Restore on unsnap** | Drag a snapped window away and it gets its original size back |
 | ⌨️ **Keyboard shortcuts** | Rectangle's layout (Ctrl+Alt based), fully customisable; press Left/Right Half again to cycle ½ → ⅔ → ⅓ |
 | 🎞 **Smooth motion** | Windows glide and grow into place, their content adapting as they resize — no jump at the end |
+| ⤵️ **Drag maximised windows** | Grab a maximised window's title bar and drag — it restores under the cursor, even with Windows Snap turned off |
 | ◻️ **Square corners** | Snapped windows get square corners like Windows 11's own Snap; they round again when you drag them free |
 | 📐 **Pixel-exact** | Edge-to-edge placement on any DPI / multi-monitor setup, including maximised and minimum-size windows |
 | 🖥 **Multi-monitor** | Move windows between displays with Ctrl+Alt+Win+Arrow (halves stay halves, maximised stays maximised) |

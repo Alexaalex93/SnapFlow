@@ -170,6 +170,12 @@ var trayWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) ui
 		}
 		return 0
 
+	case w32.WM_SETTINGCHANGE:
+		// Windows Snap may have been toggled in Windows' own Settings.
+		if wParam == w32ex.SPI_SETWINARRANGING {
+			dragRestore.refresh()
+		}
+
 	case w32.WM_DESTROY:
 		removeTrayIcon()
 		return 0

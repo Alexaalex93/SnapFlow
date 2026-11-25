@@ -83,6 +83,9 @@ func main() {
 		trayNotify(appName, tr("cfgReset"))
 	}
 
+	dragRestore = startDragRestorer()
+	dragRestore.refresh()
+
 	if failed := registerHotKeys(appCfg); len(failed) > 0 {
 		notifyShortcutConflicts(failed, false)
 	}
@@ -146,6 +149,7 @@ func startup() error {
 
 func shutdown() {
 	unregisterAllHotKeys()
+	dragRestore.stop()
 	windowAnim.Close() // lands any window still in flight
 	roundAllCorners()  // don't leave free-floating windows square after we exit
 	if dragMgr != nil {

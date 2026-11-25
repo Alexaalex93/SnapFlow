@@ -15,6 +15,7 @@ actions.go         WindowAction enum + Calculate() — pure geometry, no Win32 c
 snapzones.go       SnapZonesForWork() — maps screen edges/corners to WindowActions
 gesture.go         GestureInterpreter — zone lookup + reversible compound thirds
 drag.go            DragManager — WinEvent hooks, move-vs-resize detection, unsnap-restore
+dragrestore.go     drag a maximised window to un-maximise it (needed when Windows Snap is off)
 overlay.go         OverlayRenderer — animated per-pixel-alpha snap preview (own thread)
 animate.go         WindowAnimator — real window glides/resizes into place frame by frame (own thread)
 window.go          resizeToRect / placeFrame (pixel-exact placement), multi-monitor, window filter
@@ -107,6 +108,17 @@ counter, skipped while dragging) for apps that re-apply their own bounds.
   starts (cursor kept at the same relative title-bar position); fallback at drop if the app's move loop overrode it.
 - The LOCATIONCHANGE hook is installed per drag and scoped to the window's process (a global one fires constantly for carets/progress bars).
 
+### `dragrestore.go`
+
+Dragging a maximised window's title bar to restore it is part of Windows Snap; with Snap off it
+doesn't move at all. A `WH_MOUSE_LL` hook on its own thread (installed only while Windows Snap
+is off and drag snapping is on; `refresh()` on config change, Windows Snap toggle and
+`WM_SETTINGCHANGE(SPI_SETWINARRANGING)`) arms on a button-down over a maximised window and fires
+after the drag threshold. Off the hook: `WM_NCHITTEST` must be `HTCAPTION` (tabs/content are left
+alone), `SW_RESTORE`, `grabFrame` puts the cursor at the same relative spot of the title bar, then
+`PostMessage(WM_NCLBUTTONDOWN, HTCAPTION)` starts the system move loop with the button still
+held, so `DragManager` sees a normal drag. The hook callback only makes cheap non-blocking calls.
+
 ### `gesture.go`
 
 Zone lookup via `ActionForCursor`. The bottom edge with `"compoundThirds"` yields the internal
@@ -189,6 +201,7 @@ The General tab is rebuilt on language change; `readGeneral()` preserves unsaved
 |---|---|
 | Main OS thread (locked) | msgLoop, WM_HOTKEY, WinEvent callbacks, tray window, applyConfig. Sole owner of `appCfg`. |
 | Overlay thread (locked) | overlay window, its message pump, animation + rendering |
+| Drag-restore thread (locked) | WH_MOUSE_LL hook + un-maximise-on-drag |
 | Animator thread (locked) | per-frame SetWindowPos of the window in flight, final placement |
 | WebView goroutine (locked) | settings window (`w.Run()`) |
 | Short goroutines | placement verification, update check |

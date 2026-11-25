@@ -42,6 +42,8 @@ func applyWindowsSnap(on bool) error {
 		_ = k.SetDWordValue("EnableSnapAssistFlyout", v)
 		k.Close()
 	}
+	// With Windows Snap off, SnapFlow handles drag-to-unmaximise itself.
+	dragRestore.refresh()
 	return nil
 }
 

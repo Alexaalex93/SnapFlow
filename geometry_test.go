@@ -116,3 +116,20 @@ func TestIsTiling(t *testing.T) {
 		}
 	}
 }
+
+func TestGrabFrame_KeepsCursorInTitleBar(t *testing.T) {
+	maxFrame := w32.RECT{Left: 0, Top: 0, Right: 1920, Bottom: 1040}
+	normal := w32.RECT{Left: 300, Top: 200, Right: 1100, Bottom: 800} // 800×600
+	down := w32.POINT{X: 1440, Y: 12}                                 // 75% across the title bar
+	cursor := w32.POINT{X: 1450, Y: 20}
+	got := grabFrame(maxFrame, normal, down, cursor)
+	if got.Width() != 800 || got.Height() != 600 {
+		t.Fatalf("restored size wrong: %+v", got)
+	}
+	if rel := float64(cursor.X-got.Left) / float64(got.Width()); rel < 0.74 || rel > 0.76 {
+		t.Fatalf("cursor should stay at 75%% of the title bar, is at %.2f", rel)
+	}
+	if cursor.Y-got.Top != 12 {
+		t.Fatalf("cursor should stay at the same title-bar height, offset=%d", cursor.Y-got.Top)
+	}
+}

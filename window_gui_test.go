@@ -372,3 +372,37 @@ func TestGUI_SettingsSaveAndCancelClose(t *testing.T) {
 		t.Fatal("save() did not write the config file")
 	}
 }
+
+// Grabbing a maximised window's title bar restores it under the cursor
+// (needed when Windows Snap is off). Grabbing the client area does nothing.
+func TestGUI_DragRestoreMaximized(t *testing.T) {
+	if os.Getenv("SNAPFLOW_GUI_TESTS") != "1" {
+		t.Skip("set SNAPFLOW_GUI_TESTS=1 to run real-window tests")
+	}
+	w32ex.SetProcessDPIAwareBestEffort()
+	hwnd, stop := startRedWindow(t, "SnapFlow drag-restore test")
+	defer stop()
+	normal, _ := frameRect(hwnd)
+	w32.ShowWindow(hwnd, w32.SW_MAXIMIZE)
+	time.Sleep(500 * time.Millisecond)
+	maxFrame, _ := frameRect(hwnd)
+	d := &dragRestorer{}
+
+	// Client area (red) → must not restore.
+	if d.restoreAndDrag(hwnd, w32.POINT{X: maxFrame.Left + 200, Y: maxFrame.Top + 300}, false) || !w32ex.IsZoomed(hwnd) {
+		t.Fatal("a press in the client area must not un-maximise the window")
+	}
+	// Title bar → restores at normal size.
+	down := w32.POINT{X: maxFrame.Left + maxFrame.Width()/3, Y: maxFrame.Top + 10}
+	if !d.restoreAndDrag(hwnd, down, false) {
+		t.Fatal("title-bar press was not handled")
+	}
+	time.Sleep(300 * time.Millisecond)
+	if w32ex.IsZoomed(hwnd) {
+		t.Fatal("window still maximised")
+	}
+	got, _ := frameRect(hwnd)
+	if got.Width() != normal.Width() || got.Height() != normal.Height() {
+		t.Fatalf("restored to %dx%d, want normal size %dx%d", got.Width(), got.Height(), normal.Width(), normal.Height())
+	}
+}

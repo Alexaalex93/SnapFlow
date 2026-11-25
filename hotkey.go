@@ -148,6 +148,7 @@ func applyConfig(newCfg *AppConfig) {
 	if !newCfg.SquareCorners {
 		roundAllCorners()
 	}
+	dragRestore.refresh() // drag snapping may have been switched on/off
 	if old == nil || !sameShortcuts(old, newCfg) {
 		if failed := registerHotKeys(newCfg); len(failed) > 0 {
 			notifyShortcutConflicts(failed, true)
