@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"snapflow/w32ex"
 
 	"github.com/gonutz/w32/v2"
+	webview "github.com/jchv/go-webview2"
 )
 
 // Real-window placement tests. They briefly show a window on screen, so they
@@ -312,4 +314,52 @@ func screenPixel(x, y int32) (r, g, b byte) {
 	defer w32.ReleaseDC(0, hdc)
 	c, _, _ := gdi32DLL.NewProc("GetPixel").Call(uintptr(hdc), uintptr(x), uintptr(y))
 	return byte(c), byte(c >> 8), byte(c >> 16)
+}
+
+// Pressing Save (and Cancel) in the real settings window must close it.
+// Regression: Terminate() stopped the message loop without destroying the
+// window, leaving a frozen "Saved ✓" window on screen.
+func TestGUI_SettingsSaveAndCancelClose(t *testing.T) {
+	if os.Getenv("SNAPFLOW_GUI_TESTS") != "1" {
+		t.Skip("set SNAPFLOW_GUI_TESTS=1 to run real-window tests")
+	}
+	w32ex.SetProcessDPIAwareBestEffort()
+	dir, _ := os.MkdirTemp("", "snapflow-settings-test")
+	defer os.RemoveAll(dir) // best effort: WebView2 may still hold its lockfile
+	appCfgStore = &ConfigStore{path: filepath.Join(dir, "config.json")}
+	appCfg = defaultConfig()
+	liveCfg.Store(appCfg)
+	defer func() { settingsTestHook = nil }()
+
+	for _, js := range []string{"save()", "goClose()"} {
+		var view webview.WebView
+		ready := make(chan struct{})
+		settingsTestHook = func(w webview.WebView) { view = w; close(ready) }
+		done := make(chan struct{})
+		go func() {
+			settingsThread() // exactly what openSettings runs
+			close(done)
+		}()
+		select {
+		case <-ready:
+		case <-time.After(15 * time.Second):
+			t.Fatal("settings window did not open (WebView2 missing?)")
+		}
+		hwnd := w32.HWND(settingsHWND.Load())
+		time.Sleep(2500 * time.Millisecond) // let the page load
+		view.Dispatch(func() { view.Eval(js) })
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: settings window loop never ended", js)
+		}
+		time.Sleep(200 * time.Millisecond)
+		if w32.IsWindow(hwnd) {
+			t.Fatalf("%s: settings window still exists (frozen) after closing", js)
+		}
+		settingsHWND.Store(0)
+	}
+	if _, err := os.Stat(appCfgStore.path); err != nil {
+		t.Fatal("save() did not write the config file")
+	}
 }

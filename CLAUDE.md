@@ -175,7 +175,10 @@ centered; a second open focuses the existing window. Injected globals: `_shortcu
 (with defaults), `_general`, `_snapAreas`, `_winSnap`, `_version`, `_autorun`, `_lang`.
 Bindings: `goSaveSettings`, `goSetLanguage`, `goSuspendHotkeys`, `goShortcutText`, `goClose`,
 `goOpenConfigFile`, `goSetWindowsSnap`, `goSetAutorun`, `goCheckUpdates`, `goOpenRepo`.
-**Never call `w.Eval`/`w.Terminate` inside a Bind callback** — use `w.Dispatch` from a goroutine.
+**Never call `w.Eval` inside a Bind callback** — use `w.Dispatch` from a goroutine.
+**Close the window with `closeSettingsWindow(w)` (WM_CLOSE), never `w.Terminate()`**: Terminate only
+posts WM_QUIT, ending `w.Run()` while the window still exists → frozen window (regression test:
+`TestGUI_SettingsSaveAndCancelClose`).
 The General tab is rebuilt on language change; `readGeneral()` preserves unsaved edits.
 
 ---

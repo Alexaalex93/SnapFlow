@@ -9,7 +9,11 @@ import (
 	"snapflow/w32ex"
 
 	"github.com/gonutz/w32/v2"
+	webview "github.com/jchv/go-webview2"
 )
+
+// settingsTestHook lets GUI tests drive the real settings page.
+var settingsTestHook func(webview.WebView)
 
 var (
 	settingsOpen atomic.Bool
@@ -28,18 +32,21 @@ func openSettings() {
 		}
 		return
 	}
-	go func() {
-		runtime.LockOSThread()
-		defer func() {
-			settingsHWND.Store(0)
-			settingsOpen.Store(false)
-			runtime.UnlockOSThread()
-			// Never leave global hotkeys unregistered if the window closed
-			// while a shortcut was being recorded.
-			postToMain(wmSuspendHotkeys, 0, 0)
-		}()
-		runSettingsWindow()
+	go settingsThread()
+}
+
+// settingsThread hosts the settings window on its own locked OS thread.
+func settingsThread() {
+	runtime.LockOSThread()
+	defer func() {
+		settingsHWND.Store(0)
+		settingsOpen.Store(false)
+		runtime.UnlockOSThread()
+		// Never leave global hotkeys unregistered if the window closed
+		// while a shortcut was being recorded.
+		postToMain(wmSuspendHotkeys, 0, 0)
 	}()
+	runSettingsWindow()
 }
 
 // pendingCfg holds the newest config submitted from a non-main goroutine;

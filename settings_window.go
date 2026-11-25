@@ -84,6 +84,17 @@ func shortcutOverrides(list []ShortcutBinding) map[string]ShortcutConfig {
 	return out
 }
 
+// closeSettingsWindow closes the settings window properly: WM_CLOSE →
+// DestroyWindow → WM_DESTROY → the loop in w.Run() ends.
+//
+// Do NOT use w.Terminate() for this: it only posts WM_QUIT, which ends
+// w.Run() while the window still exists. Nobody pumps its messages after
+// that, so it stayed on screen frozen ("Saved ✓" then not responding).
+// Safe from any goroutine (it is a PostMessage).
+func closeSettingsWindow(w webview.WebView) {
+	w32.PostMessage(w32.HWND(uintptr(w.Window())), w32.WM_CLOSE, 0, 0)
+}
+
 func runSettingsWindow() {
 	cfg := liveCfg.Load()
 	if cfg == nil {
@@ -128,6 +139,9 @@ func runSettingsWindow() {
 	}
 	defer w.Destroy()
 	settingsHWND.Store(uintptr(w.Window()))
+	if settingsTestHook != nil {
+		settingsTestHook(w)
+	}
 	w.SetSize(int(560*scale), int(480*scale), webview.HintMin)
 
 	w.Bind("goSaveSettings", func(payload string) {
@@ -178,12 +192,12 @@ func runSettingsWindow() {
 
 		submitConfig(fillDefaults(newCfg))
 
-		// Eval/Terminate must not run inside a Bind callback (WebView2
-		// deadlock). Dispatch queues them on the UI thread after we return.
+		// Eval must not run inside a Bind callback (WebView2 deadlock):
+		// Dispatch queues it on the UI thread after we return. Then close.
 		go func() {
 			w.Dispatch(func() { w.Eval("window.showSaved()") })
 			time.Sleep(650 * time.Millisecond)
-			w.Dispatch(func() { w.Terminate() })
+			closeSettingsWindow(w)
 		}()
 	})
 
@@ -212,7 +226,7 @@ func runSettingsWindow() {
 
 	// window.close() does not close the native host window in WebView2.
 	w.Bind("goClose", func() {
-		go w.Dispatch(func() { w.Terminate() })
+		closeSettingsWindow(w)
 	})
 
 	w.Bind("goOpenConfigFile", func() {
