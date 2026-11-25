@@ -298,7 +298,7 @@ func startRedWindow(t *testing.T, title string) (w32.HWND, func()) {
 	t.Helper()
 	script := `Add-Type -AssemblyName System.Windows.Forms;` +
 		`$f=New-Object Windows.Forms.Form;$f.Text='` + title + `';$f.BackColor='Red';` +
-		`$f.StartPosition='Manual';$f.Left=400;$f.Top=300;$f.Width=500;$f.Height=350;` +
+		`$f.StartPosition='Manual';$f.Left=400;$f.Top=300;$f.Width=500;$f.Height=350;$f.TopMost=$true;` +
 		`$t=New-Object Windows.Forms.Timer;$t.Interval=8000;$t.add_Tick({$f.Close()});$t.Start();` +
 		`[Windows.Forms.Application]::Run($f)`
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)

@@ -115,7 +115,9 @@ doesn't move at all. A `WH_MOUSE_LL` hook on its own thread (installed only whil
 is off and drag snapping is on; `refresh()` on config change, Windows Snap toggle and
 `WM_SETTINGCHANGE(SPI_SETWINARRANGING)`) arms on a button-down over a maximised window and fires
 after the drag threshold. Off the hook: `WM_NCHITTEST` must be `HTCAPTION` (tabs/content are left
-alone), `SW_RESTORE`, `grabFrame` puts the cursor at the same relative spot of the title bar, then
+alone), a single `SetWindowPlacement` restores it at its normal size with `grabFrame` putting the
+cursor at the same relative spot of the title bar (do NOT `SW_RESTORE` then read the size: the app is
+busy with the click and the window came back at maximised size), then
 `PostMessage(WM_NCLBUTTONDOWN, HTCAPTION)` starts the system move loop with the button still
 held, so `DragManager` sees a normal drag. The hook callback only makes cheap non-blocking calls.
 
@@ -221,6 +223,7 @@ Never call `syscall.NewCallback` per operation.
 ```powershell
 go test ./...                                   # pure logic (CI)
 $env:SNAPFLOW_GUI_TESTS=1; go test -run GUI -v . # real windows: pixel-exact placement, overlay
+$env:SNAPFLOW_MOUSE_TESTS=1; go test -run Mouse -v . # drives the REAL mouse (drag maximised → left half)
 ```
 `window_gui_test.go` briefly shows a window and the overlay; skipped unless the env var is set.
 

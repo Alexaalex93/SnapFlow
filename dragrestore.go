@@ -198,15 +198,24 @@ func (d *dragRestorer) restoreAndDrag(hwnd w32.HWND, downPt w32.POINT, interacti
 		return false
 	}
 
-	w32.ShowWindow(hwnd, w32.SW_RESTORE)
-	normal, ok := frameRect(hwnd)
-	if !ok {
+	// Restore in ONE step at the right place with SetWindowPlacement.
+	// (ShowWindow(SW_RESTORE) and then reading the size raced with the app,
+	// which is busy handling the very click we're reacting to: the window
+	// was "restored" at its maximised size, so it couldn't be dropped into
+	// a half.)
+	cursor, _ := w32ex.GetCursorPos()
+	var wp w32.WINDOWPLACEMENT
+	wp.Length = uint32(unsafe.Sizeof(wp))
+	if !w32.GetWindowPlacement(hwnd, &wp) || wp.RcNormalPosition.Width() <= 0 {
 		return false
 	}
-	cursor, _ := w32ex.GetCursorPos()
-	nf := grabFrame(maxFrame, normal, downPt, cursor)
-	if in, ok := windowInsets(hwnd); ok {
-		setWindowFrame(hwnd, nf, in, 0)
+	nr := grabFrame(maxFrame, wp.RcNormalPosition, downPt, cursor) // screen coords
+	off := workspaceOffset()
+	wp.RcNormalPosition = w32.RECT{Left: nr.Left - off.X, Top: nr.Top - off.Y, Right: nr.Right - off.X, Bottom: nr.Bottom - off.Y}
+	wp.ShowCmd = w32.SW_SHOWNORMAL
+	wp.Flags = 0
+	if !w32.SetWindowPlacement(hwnd, &wp) {
+		return false
 	}
 
 	if !interactive || w32.GetAsyncKeyState(vkLButton)&0x8000 == 0 {
@@ -215,6 +224,18 @@ func (d *dragRestorer) restoreAndDrag(hwnd w32.HWND, downPt w32.POINT, interacti
 	cp := uintptr(uint16(int16(cursor.X))) | uintptr(uint16(int16(cursor.Y)))<<16
 	w32.PostMessage(hwnd, wmNCLButtonDown, htCaption, cp)
 	return true
+}
+
+// workspaceOffset converts screen coordinates to the "workspace"
+// coordinates WINDOWPLACEMENT uses (relative to the primary monitor's work
+// area — they differ when the taskbar is at the top or left).
+func workspaceOffset() w32.POINT {
+	mon := w32ex.MonitorFromPoint(w32.POINT{}, w32ex.MONITOR_DEFAULTTOPRIMARY)
+	var info w32.MONITORINFO
+	if !w32.GetMonitorInfo(mon, &info) {
+		return w32.POINT{}
+	}
+	return w32.POINT{X: info.RcWork.Left - info.RcMonitor.Left, Y: info.RcWork.Top - info.RcMonitor.Top}
 }
 
 // grabFrame positions a frame of normal's size so that the cursor sits at
