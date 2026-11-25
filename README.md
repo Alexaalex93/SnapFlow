@@ -145,7 +145,7 @@ Click the SnapFlow tray icon to open Settings; right-click for the menu:
 | Settings | Opens the Settings window (or brings it to the front) |
 | Snap windows by dragging | Pause / resume drag snapping |
 | Launch at login | Toggle autostart |
-| Disable Windows Snap | Turns off AeroSnap immediately (recommended) |
+| Windows Snap (conflicts with SnapFlow) | Ticked = Windows' own Snap is on. Untick it (recommended) — applies immediately |
 | Open config file | Opens `config.json` in your default editor |
 | Check for updates | Notifies you if a newer release exists |
 | Quit | Exits SnapFlow |

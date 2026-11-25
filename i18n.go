@@ -10,8 +10,7 @@ var nativeStrings = map[string]map[string]string{
 	"en": {
 		"menuSettings":    "Settings…",
 		"menuSnapDrag":    "Snap windows by dragging",
-		"menuWinSnapOff":  "Disable Windows Snap (conflicts)",
-		"menuWinSnapOn":   "Re-enable Windows Snap",
+		"menuWinSnap":     "Windows Snap (conflicts with SnapFlow)",
 		"menuAutoRun":     "Launch at login",
 		"menuOpenConfig":  "Open config file",
 		"menuUpdates":     "Check for updates…",
@@ -36,8 +35,7 @@ var nativeStrings = map[string]map[string]string{
 	"es": {
 		"menuSettings":    "Ajustes…",
 		"menuSnapDrag":    "Ajustar ventanas arrastrando",
-		"menuWinSnapOff":  "Desactivar Windows Snap (conflictos)",
-		"menuWinSnapOn":   "Reactivar Windows Snap",
+		"menuWinSnap":     "Windows Snap (choca con SnapFlow)",
 		"menuAutoRun":     "Iniciar al iniciar sesión",
 		"menuOpenConfig":  "Abrir archivo de configuración",
 		"menuUpdates":     "Buscar actualizaciones…",

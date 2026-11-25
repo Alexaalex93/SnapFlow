@@ -365,11 +365,9 @@ func showTrayMenu(hwnd w32.HWND) {
 	add(menuSnapDrag, tr("menuSnapDrag"), appCfg.SnapByDragging)
 	autorun, _ := AutoRunEnabled()
 	add(menuAutoRun, tr("menuAutoRun"), autorun)
-	if WindowsSnapEnabled() {
-		add(menuDisableWSnap, tr("menuWinSnapOff"), false)
-	} else {
-		add(menuDisableWSnap, tr("menuWinSnapOn"), false)
-	}
+	// A normal checkbox showing the real state (it used to be an action
+	// whose label flipped between "Disable…" and "Re-enable…").
+	add(menuDisableWSnap, tr("menuWinSnap"), WindowsSnapEnabled())
 	sep()
 	add(menuOpenConfig, tr("menuOpenConfig"), false)
 	add(menuCheckUpdate, tr("menuUpdates"), false)
