@@ -31,7 +31,7 @@ Download `SnapFlow-x.x.x-Setup.exe` and run it. The installer:
 | 🎯 **Compound thirds** | Drag along the bottom edge to sweep across thirds — release over 1, 2 or 3 to snap to that fraction (sweep back to shrink) |
 | ↩️ **Restore on unsnap** | Drag a snapped window away and it gets its original size back |
 | ⌨️ **Keyboard shortcuts** | Rectangle's layout (Ctrl+Alt based), fully customisable; press Left/Right Half again to cycle ½ → ⅔ → ⅓ |
-| 🎞 **Smooth motion** | Windows glide and grow into place (GPU-rendered, smooth even for Chrome or VS Code) instead of jumping |
+| 🎞 **Smooth motion** | Windows glide and grow into place, their content adapting as they resize — no jump at the end |
 | ◻️ **Square corners** | Snapped windows get square corners like Windows 11's own Snap; they round again when you drag them free |
 | 📐 **Pixel-exact** | Edge-to-edge placement on any DPI / multi-monitor setup, including maximised and minimum-size windows |
 | 🖥 **Multi-monitor** | Move windows between displays with Ctrl+Alt+Win+Arrow (halves stay halves, maximised stays maximised) |

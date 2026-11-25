@@ -122,6 +122,8 @@ func (d *DragManager) onMoveStart(hwnd w32.HWND) {
 	if !isZonableWindow(hwnd) {
 		return
 	}
+	// The user grabbed a window that is still animating: stop the motion.
+	windowAnim.Cancel(hwnd)
 	pt, ok := w32ex.GetCursorPos()
 	if !ok {
 		return

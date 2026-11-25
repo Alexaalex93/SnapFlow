@@ -222,9 +222,9 @@ func TestGUI_SquareCornersCrossProcess(t *testing.T) {
 	}
 }
 
-// Animated move of a window owned by another process: the real window is
-// parked off-screen, the proxy thumbnail (red content, not black) is visible
-// mid-flight, a retarget mid-flight works, and the window lands pixel-exact.
+// Animated move of a window owned by another process: the REAL window is
+// resized gradually (intermediate sizes, content stays live — no stretched
+// snapshot), a retarget mid-flight works, and it lands pixel-exact.
 func TestGUI_WindowAnimationCrossProcess(t *testing.T) {
 	if os.Getenv("SNAPFLOW_GUI_TESTS") != "1" {
 		t.Skip("set SNAPFLOW_GUI_TESTS=1 to run real-window tests")
@@ -250,7 +250,6 @@ func TestGUI_WindowAnimationCrossProcess(t *testing.T) {
 	target := ActionLeftHalf.Calculate(work, from, appCfg)
 	expected := extendFlushEdges(target, work)
 
-	start := time.Now()
 	if got, _ := placeWindow(hwnd, from, target); got != expected {
 		t.Fatalf("placeWindow returned %+v, want expected %+v", got, expected)
 	}
@@ -258,17 +257,30 @@ func TestGUI_WindowAnimationCrossProcess(t *testing.T) {
 		t.Fatalf("logical frame mid-flight = %+v, want %+v", lf, target)
 	}
 
-	time.Sleep(windowAnimDur / 2)
-	if real, _ := frameRect(hwnd); w32.MonitorFromRect(&real, w32ex.MONITOR_DEFAULTTONULL) != 0 {
-		t.Errorf("real window should be parked off-screen mid-flight, is at %+v", real)
+	// Sample the real window during the flight: sizes must be intermediate
+	// and the content (red) must be live at the window's current size.
+	intermediate := 0
+	deadline := time.Now().Add(windowAnimDur * 8 / 10)
+	for time.Now().Before(deadline) {
+		f, _ := frameRect(hwnd)
+		lo, hi := from.Height(), expected.Height()
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		if f.Height() > lo+2 && f.Height() < hi-2 {
+			intermediate++
+			if r, g, b := screenPixel(f.Left+f.Width()/2, f.Top+f.Height()/2); !(r > 200 && g < 60 && b < 60) {
+				t.Errorf("content not live mid-flight: pixel (%d,%d,%d) at frame %+v", r, g, b, f)
+			}
+		}
+		time.Sleep(15 * time.Millisecond)
 	}
-	e := easeOutCubic(progress(start, windowAnimDur, time.Now()))
-	mid := lerpRect(toFrect(from), toFrect(expected), e).round()
-	if r, g, b := screenPixel(mid.Left+mid.Width()/2, mid.Top+mid.Height()/2); !(r > 200 && g < 60 && b < 60) {
-		t.Errorf("proxy thumbnail not visible mid-flight: pixel (%d,%d,%d), want red", r, g, b)
+	if intermediate < 2 {
+		t.Errorf("expected the real window to pass through intermediate sizes, saw %d", intermediate)
 	}
 
 	// Retarget mid-flight.
+	placeWindow(hwnd, target, ActionLeftHalf.Calculate(work, from, appCfg))
 	target2 := ActionBottomRightSixth.Calculate(work, from, appCfg)
 	placeWindow(hwnd, target, target2)
 	time.Sleep(windowAnimDur + 400*time.Millisecond)
@@ -276,9 +288,6 @@ func TestGUI_WindowAnimationCrossProcess(t *testing.T) {
 	got, _ := frameRect(hwnd)
 	if want := extendFlushEdges(target2, work); !rectNear(got, want, 0) {
 		t.Fatalf("landed at %+v, want %+v", got, want)
-	}
-	if w32.IsWindowVisible(a.proxy) {
-		t.Error("proxy still visible after landing")
 	}
 	if a.inFlight(hwnd) {
 		t.Error("window still marked in flight")
