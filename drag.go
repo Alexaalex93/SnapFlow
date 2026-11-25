@@ -285,7 +285,7 @@ func (d *DragManager) onMoveEnd(hwnd w32.HWND) {
 		cur = frameNow
 	}
 	target := action.Calculate(work, cur, appCfg)
-	got, err := resizeToRect(hwnd, target)
+	got, err := placeWindow(hwnd, frameNow, target)
 	if err == nil && got.Width() > 0 {
 		updateCorners(hwnd, action)
 		windowHistory.RecordSnap(hwnd, before, got)

@@ -196,6 +196,7 @@ body{font-family:"Segoe UI",system-ui,sans-serif;font-size:13px;
       <label><input type="checkbox" id="snapByDragging"> <span data-i18n="cbSnap">Snap windows by dragging</span></label>
       <label><input type="checkbox" id="restoreSize"> <span data-i18n="cbRestore">Restore window size when unsnapped</span></label>
       <label><input type="checkbox" id="animateFootprint"> <span data-i18n="cbAnimate">Animate footprint</span></label>
+      <label><input type="checkbox" id="animateWindows"> <span data-i18n="cbAnimWin">Animate window movement</span></label>
       <label><input type="checkbox" id="squareCorners"> <span data-i18n="cbSquare">Square corners on snapped windows</span></label>
     </div>
     <div class="thirds-info" id="thirdsInfo">
@@ -301,7 +302,7 @@ const LANGS = {
     winSnapTitle:'Windows Snap (AeroSnap)',
     winSnapSub:'Disable to prevent Windows from intercepting drag-to-edge gestures',
     winSnapEnabled:'Enabled',
-    cbSnap:'Snap windows by dragging',cbRestore:'Restore window size when unsnapped',cbAnimate:'Animate footprint',cbSquare:'Square corners on snapped windows',
+    cbSnap:'Snap windows by dragging',cbRestore:'Restore window size when unsnapped',cbAnimate:'Animate footprint',cbSquare:'Square corners on snapped windows',cbAnimWin:'Animate window movement',
     zTL:'Top-Left',zT:'Top',zTR:'Top-Right',zL:'Left',zR:'Right',zBL:'Bot-Left',zB:'Bottom',zBR:'Bot-Right',
     thirdsTitle:'Bottom edge — Compound Thirds',
     thirdsP:'Drag a window to the bottom edge and release:',
@@ -330,7 +331,7 @@ const LANGS = {
     winSnapTitle:'Windows Snap (AeroSnap)',
     winSnapSub:'Desactivar para evitar que Windows intercepte gestos de arrastre al borde',
     winSnapEnabled:'Activado',
-    cbSnap:'Ajustar ventanas arrastrando',cbRestore:'Restaurar tamaño al desanclar',cbAnimate:'Animar huella',cbSquare:'Esquinas cuadradas en ventanas ajustadas',
+    cbSnap:'Ajustar ventanas arrastrando',cbRestore:'Restaurar tamaño al desanclar',cbAnimate:'Animar huella',cbSquare:'Esquinas cuadradas en ventanas ajustadas',cbAnimWin:'Animar el movimiento de las ventanas',
     zTL:'Sup-Izq',zT:'Arriba',zTR:'Sup-Der',zL:'Izquierda',zR:'Derecha',zBL:'Inf-Izq',zB:'Abajo',zBR:'Inf-Der',
     thirdsTitle:'Borde inferior — Tercios compuestos',
     thirdsP:'Arrastra una ventana al borde inferior y suéltala:',
@@ -615,6 +616,7 @@ function buildSnapAreas(){
   document.getElementById('restoreSize').checked=sa.restoreSize;
   document.getElementById('animateFootprint').checked=sa.animateFootprint;
   document.getElementById('squareCorners').checked=sa.squareCorners;
+  document.getElementById('animateWindows').checked=sa.animateWindows;
   document.getElementById('winSnapEnabled').checked=window._winSnap;
   const g=document.getElementById('snapGrid');
   g.innerHTML=
@@ -749,7 +751,7 @@ function save(){
              sizeStep:gi('sizeStep'),cycleHalves:gc('cycleHalves'),
              previewOpacity:gi('previewOpacity')},
     snapAreas:{snapByDragging:gc('snapByDragging'),restoreSize:gc('restoreSize'),
-               animateFootprint:gc('animateFootprint'),squareCorners:gc('squareCorners'),
+               animateFootprint:gc('animateFootprint'),squareCorners:gc('squareCorners'),animateWindows:gc('animateWindows'),
                topLeft:gv('z-topLeft'),top:gv('z-top'),topRight:gv('z-topRight'),
                left:gv('z-left'),right:gv('z-right'),
                bottomLeft:gv('z-bottomLeft'),bottom:gv('z-bottom'),bottomRight:gv('z-bottomRight')},
@@ -764,6 +766,7 @@ function resetDefaults(){
   const ch=document.getElementById('cycleHalves'); if(ch) ch.checked=true;
   document.getElementById('restoreSize').checked=true;
   document.getElementById('squareCorners').checked=true;
+  document.getElementById('animateWindows').checked=true;
   stopRec();
   SC.forEach((e,i)=>{ e.mod=e.defMod; e.vk=e.defVk; e.text=e.defText; renderChip(i); });
   const z={topLeft:'topLeft',top:'maximize',topRight:'topRight',

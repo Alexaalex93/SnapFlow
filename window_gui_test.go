@@ -219,3 +219,97 @@ func TestGUI_SquareCornersCrossProcess(t *testing.T) {
 		t.Fatal("corner still square after roundCorners")
 	}
 }
+
+// Animated move of a window owned by another process: the real window is
+// parked off-screen, the proxy thumbnail (red content, not black) is visible
+// mid-flight, a retarget mid-flight works, and the window lands pixel-exact.
+func TestGUI_WindowAnimationCrossProcess(t *testing.T) {
+	if os.Getenv("SNAPFLOW_GUI_TESTS") != "1" {
+		t.Skip("set SNAPFLOW_GUI_TESTS=1 to run real-window tests")
+	}
+	w32ex.SetProcessDPIAwareBestEffort()
+	if !systemAnimationsEnabled() {
+		t.Skip("Windows animation effects are off")
+	}
+	appCfg = defaultConfig()
+	liveCfg.Store(appCfg)
+	a, err := NewWindowAnimator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowAnim = a
+	defer func() { a.Close(); windowAnim = nil }()
+
+	hwnd, stop := startRedWindow(t, "SnapFlow animation test")
+	defer stop()
+
+	from, _ := frameRect(hwnd)
+	work, _ := monitorWork(w32.MonitorFromRect(&from, w32.MONITOR_DEFAULTTONEAREST))
+	target := ActionLeftHalf.Calculate(work, from, appCfg)
+	expected := extendFlushEdges(target, work)
+
+	start := time.Now()
+	if got, _ := placeWindow(hwnd, from, target); got != expected {
+		t.Fatalf("placeWindow returned %+v, want expected %+v", got, expected)
+	}
+	if lf, _ := currentFrame(hwnd); lf != target {
+		t.Fatalf("logical frame mid-flight = %+v, want %+v", lf, target)
+	}
+
+	time.Sleep(windowAnimDur / 2)
+	if real, _ := frameRect(hwnd); w32.MonitorFromRect(&real, w32ex.MONITOR_DEFAULTTONULL) != 0 {
+		t.Errorf("real window should be parked off-screen mid-flight, is at %+v", real)
+	}
+	e := easeOutCubic(progress(start, windowAnimDur, time.Now()))
+	mid := lerpRect(toFrect(from), toFrect(expected), e).round()
+	if r, g, b := screenPixel(mid.Left+mid.Width()/2, mid.Top+mid.Height()/2); !(r > 200 && g < 60 && b < 60) {
+		t.Errorf("proxy thumbnail not visible mid-flight: pixel (%d,%d,%d), want red", r, g, b)
+	}
+
+	// Retarget mid-flight.
+	target2 := ActionBottomRightSixth.Calculate(work, from, appCfg)
+	placeWindow(hwnd, target, target2)
+	time.Sleep(windowAnimDur + 400*time.Millisecond)
+
+	got, _ := frameRect(hwnd)
+	if want := extendFlushEdges(target2, work); !rectNear(got, want, 0) {
+		t.Fatalf("landed at %+v, want %+v", got, want)
+	}
+	if w32.IsWindowVisible(a.proxy) {
+		t.Error("proxy still visible after landing")
+	}
+	if a.inFlight(hwnd) {
+		t.Error("window still marked in flight")
+	}
+}
+
+func startRedWindow(t *testing.T, title string) (w32.HWND, func()) {
+	t.Helper()
+	script := `Add-Type -AssemblyName System.Windows.Forms;` +
+		`$f=New-Object Windows.Forms.Form;$f.Text='` + title + `';$f.BackColor='Red';` +
+		`$f.StartPosition='Manual';$f.Left=400;$f.Top=300;$f.Width=500;$f.Height=350;` +
+		`$t=New-Object Windows.Forms.Timer;$t.Interval=8000;$t.add_Tick({$f.Close()});$t.Start();` +
+		`[Windows.Forms.Application]::Run($f)`
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var hwnd w32.HWND
+	for i := 0; i < 100 && hwnd == 0; i++ {
+		time.Sleep(100 * time.Millisecond)
+		hwnd = w32.FindWindow("", title)
+	}
+	if hwnd == 0 {
+		cmd.Process.Kill()
+		t.Fatal("test window did not appear")
+	}
+	time.Sleep(400 * time.Millisecond)
+	return hwnd, func() { cmd.Process.Kill() }
+}
+
+func screenPixel(x, y int32) (r, g, b byte) {
+	hdc := w32.GetDC(0)
+	defer w32.ReleaseDC(0, hdc)
+	c, _, _ := gdi32DLL.NewProc("GetPixel").Call(uintptr(hdc), uintptr(x), uintptr(y))
+	return byte(c), byte(c >> 8), byte(c >> 16)
+}

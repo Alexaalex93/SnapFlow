@@ -16,6 +16,7 @@ snapzones.go       SnapZonesForWork() — maps screen edges/corners to WindowAct
 gesture.go         GestureInterpreter — zone lookup + reversible compound thirds
 drag.go            DragManager — WinEvent hooks, move-vs-resize detection, unsnap-restore
 overlay.go         OverlayRenderer — animated per-pixel-alpha snap preview (own thread)
+animate.go         WindowAnimator — windows glide/grow into place via a DWM-thumbnail proxy (own thread)
 window.go          resizeToRect / placeFrame (pixel-exact placement), multi-monitor, window filter
 history.go         WindowHistory — restore rect, last snapped rect, cycle state
 corners.go         square corners on snapped windows (DWMWA_WINDOW_CORNER_PREFERENCE)
@@ -126,6 +127,24 @@ anti-aliased rounded rect via SDF (only corner bands per-pixel; row middles are 
 retarget = glide, hide = fade. Colour = Windows accent (`HKCU\Software\Microsoft\Windows\DWM\AccentColor`),
 fill opacity = `FootprintAlpha`, `AnimateFootprint=false` → instant.
 
+### `animate.go` — animated window movement
+
+Cloaking another process's window is access-denied and per-frame `SetWindowPos` makes heavy apps
+stutter, so the motion is a **proxy**: a transparent topmost popup (`WS_EX_NOREDIRECTIONBITMAP`)
+shows a live `DwmRegisterThumbnail` of the window over it; after two `DwmFlush`es the real window
+is parked off-screen (`offscreenSpot`: on no monitor, nearest monitor unchanged → no DPI change,
+same size → content stays valid); the thumbnail's `rcDestination` eases from the old frame to the
+expected frame (230ms, DwmFlush-paced); then `resizeToRect` places the real window, the thumbnail
+is pointed at the final frame, and the proxy hides. A new request for the same window retargets
+mid-flight; for another window the current flight lands first.
+
+Callers use `placeWindow(hwnd, from, target)` (main thread): it returns the *expected* frame
+immediately so history/corners/cycling stay synchronous; the animator fixes history via
+`UpdateSnapped` if an app's minimum size changes the result. `currentFrame()` returns the
+in-flight target for windows that are parked. Skipped for minimised/maximised windows, windows
+with display affinity (protected content), when Windows "Animation effects" is off, or when
+`AnimateWindows` is false. `Close()` lands any window in flight (never leaves one off-screen).
+
 ### `corners.go`
 
 Windows 11 squares the corners of windows it snaps. After a placement, `updateCorners` sets
@@ -165,6 +184,7 @@ The General tab is rebuilt on language change; `readGeneral()` preserves unsaved
 |---|---|
 | Main OS thread (locked) | msgLoop, WM_HOTKEY, WinEvent callbacks, tray window, applyConfig. Sole owner of `appCfg`. |
 | Overlay thread (locked) | overlay window, its message pump, animation + rendering |
+| Animator thread (locked) | proxy window + DWM thumbnail, window flight animation, final placement |
 | WebView goroutine (locked) | settings window (`w.Run()`) |
 | Short goroutines | placement verification, update check |
 

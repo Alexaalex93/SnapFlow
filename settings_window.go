@@ -159,6 +159,7 @@ func runSettingsWindow() {
 		newCfg.RestoreSize = sa.RestoreSize
 		newCfg.AnimateFootprint = sa.AnimateFootprint
 		newCfg.SquareCorners = sa.SquareCorners
+		newCfg.AnimateWindows = sa.AnimateWindows
 		newCfg.ZoneTopLeft = sa.TopLeft
 		newCfg.ZoneTop = sa.Top
 		newCfg.ZoneTopRight = sa.TopRight
@@ -275,6 +276,7 @@ func runSettingsWindow() {
 			RestoreSize:      cfg.RestoreSize,
 			AnimateFootprint: cfg.AnimateFootprint,
 			SquareCorners:    cfg.SquareCorners,
+			AnimateWindows:   cfg.AnimateWindows,
 			TopLeft:          cfg.ZoneTopLeft,
 			Top:              cfg.ZoneTop,
 			TopRight:         cfg.ZoneTopRight,

@@ -94,6 +94,7 @@ type SnapAreasSettings struct {
 	RestoreSize      bool   `json:"restoreSize"`
 	AnimateFootprint bool   `json:"animateFootprint"`
 	SquareCorners    bool   `json:"squareCorners"`
+	AnimateWindows   bool   `json:"animateWindows"`
 	TopLeft          string `json:"topLeft"`
 	Top              string `json:"top"`
 	TopRight         string `json:"topRight"`

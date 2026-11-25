@@ -76,6 +76,16 @@ func (h *WindowHistory) Pop(hwnd w32.HWND) (w32.RECT, bool) {
 	return e.restore, true
 }
 
+// UpdateSnapped corrects the recorded snapped rect once the real placement
+// is known (an app's minimum size can make it differ from what was expected).
+func (h *WindowHistory) UpdateSnapped(hwnd w32.HWND, expected, got w32.RECT) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if e, ok := h.entries[hwnd]; ok && rectNear(e.snapped, expected, 0) {
+		e.snapped = got
+	}
+}
+
 // Forget drops any state for hwnd (window was moved freely by the user).
 func (h *WindowHistory) Forget(hwnd w32.HWND) {
 	h.mu.Lock()

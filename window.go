@@ -322,17 +322,19 @@ func moveToMonitor(hwnd w32.HWND, from, to w32.HMONITOR) {
 	if wasMax || w32ex.IsIconic(hwnd) {
 		w32.ShowWindow(hwnd, w32.SW_RESTORE)
 	}
-	frame, ok := frameRect(hwnd)
+	frame, ok := currentFrame(hwnd)
 	if !ok {
 		return
 	}
 	target := mapRectBetween(frame, fromWork, toWork)
-	if _, err := resizeToRect(hwnd, target); err != nil {
+	if wasMax {
+		// Maximised windows jump (Windows animates the maximise itself).
+		if _, err := resizeToRect(hwnd, target); err == nil {
+			w32.ShowWindow(hwnd, w32.SW_MAXIMIZE)
+		}
 		return
 	}
-	if wasMax {
-		w32.ShowWindow(hwnd, w32.SW_MAXIMIZE)
-	}
+	placeWindow(hwnd, frame, target)
 }
 
 // mapRectBetween scales r from one work area into another and clamps it

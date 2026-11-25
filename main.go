@@ -132,6 +132,10 @@ func startup() error {
 	}
 	overlay.Configure(appCfg.AnimateFootprint, appCfg.FootprintAlpha)
 
+	if windowAnim, err = NewWindowAnimator(); err != nil {
+		windowAnim = nil // no animations; placement still works
+	}
+
 	gest := NewGestureInterpreter(appCfg)
 	dragMgr = NewDragManager(gest, overlay)
 	if err := dragMgr.Start(); err != nil {
@@ -142,7 +146,8 @@ func startup() error {
 
 func shutdown() {
 	unregisterAllHotKeys()
-	roundAllCorners() // don't leave free-floating windows square after we exit
+	windowAnim.Close() // lands any window still in flight
+	roundAllCorners()  // don't leave free-floating windows square after we exit
 	if dragMgr != nil {
 		dragMgr.Stop()
 	}
@@ -178,7 +183,9 @@ func executeAction(hwnd w32.HWND, action WindowAction) {
 
 	case ActionRestore:
 		if prev, ok := windowHistory.Pop(hwnd); ok {
-			resizeToRect(hwnd, prev)
+			if cur, ok := currentFrame(hwnd); ok {
+				placeWindow(hwnd, cur, prev)
+			}
 		} else if w32ex.IsZoomed(hwnd) {
 			w32.ShowWindow(hwnd, w32.SW_RESTORE)
 		}
@@ -199,14 +206,15 @@ func executeAction(hwnd w32.HWND, action WindowAction) {
 		return
 	}
 
-	work, ok := monitorWork(w32.MonitorFromWindow(hwnd, w32.MONITOR_DEFAULTTONEAREST))
+	// Geometry works on the visible frame (not GetWindowRect), otherwise
+	// size-relative actions like Center/Larger grew the window by the
+	// invisible border on every press. currentFrame also knows where a
+	// window that is still animating is heading.
+	cur, ok := currentFrame(hwnd)
 	if !ok {
 		return
 	}
-	// Geometry works on the visible frame (not GetWindowRect), otherwise
-	// size-relative actions like Center/Larger grew the window by the
-	// invisible border on every press.
-	cur, ok := frameRect(hwnd)
+	work, ok := monitorWork(w32.MonitorFromRect(&cur, w32.MONITOR_DEFAULTTONEAREST))
 	if !ok {
 		return
 	}
@@ -218,7 +226,7 @@ func executeAction(hwnd w32.HWND, action WindowAction) {
 	}
 
 	target := effective.Calculate(work, cur, appCfg)
-	got, err := resizeToRect(hwnd, target)
+	got, err := placeWindow(hwnd, cur, target)
 	if err != nil {
 		fmt.Printf("warn: action %d: %v\n", action, err)
 		return
